@@ -1,0 +1,11 @@
+{
+  "leet_code_categories": ["Arrays", "Linked Lists", "Trees", "Graphs", "Dynamic Programming", "Recursion", "Sorting", "Searching", "Backtracking", "Bit Manipulation", "Greedy Algorithms", "Sliding Window"],
+  "stem_applications": [
+    { "problem": "Projectile Motion", "concept": "Parabolic Equations" },
+    { "problem": "Circuit Analysis", "concept": "Graph Theory / Matrices" },
+    { "problem": "Population Growth", "concept": "Exponential/Logarithmic Logic" },
+    { "problem": "Fluid Dynamics", "concept": "Conservation Laws / Differential Solvers" },
+    { "problem": "Orbital Mechanics", "concept": "Keplerian Physics / Vector Math" }
+  ],
+  "difficulty_levels": ["Entry", "Easy", "Medium", "Hard", "Expert", "Research-Grade"]
+}
