@@ -16,6 +16,11 @@ LeetCode-style STEM coding practice platform with in-browser judging, subject-dr
   - Submit mode (public + hidden tests)
   - status, runtime, and per-case output
 - Local persistence of editor code and submission history.
+- Community systems:
+  - authentication (`Sign In` / `Sign Up`)
+  - leaderboard with composite ranking
+  - peer verification queue (review others' submissions)
+  - contributor scoring (solution + review quality + consensus alignment)
 
 ## Run Locally
 
@@ -25,6 +30,17 @@ npm run type-check
 npm run build
 npm run dev
 ```
+
+## Community Backend Setup (Supabase)
+
+1. Create a Supabase project.
+2. Run the SQL in [`data/supabase-community-schema.sql`](data/supabase-community-schema.sql).
+3. Copy `.env.example` to `.env` and set:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+4. Restart `npm run dev`.
+
+If env vars are missing, the app runs in local fallback mode with browser storage.
 
 ## Deployment
 
