@@ -12,11 +12,12 @@ import type {
   StemProblem,
 } from './types'
 
-type PanelTab = 'description' | 'editorial' | 'submissions' | 'notes'
+type PanelTab = 'description' | 'editorial' | 'submissions' | 'notes' | 'proof'
 type TopView =
   | 'problems'
   | 'daily'
   | 'contest'
+  | 'mock'
   | 'leaderboard'
   | 'reviews'
   | 'progress'
@@ -58,12 +59,25 @@ interface StudyPlan {
   problemIds: string[]
 }
 
+interface ProofChecklist {
+  theoremBuilt: boolean
+  edgeCasesCovered: boolean
+  complexityArgued: boolean
+  finalReviewDone: boolean
+}
+
 const SOURCE_STORAGE_KEY = 'stem-leet-code:sources:v1'
 const SUBMISSION_STORAGE_KEY = 'stem-leet-code:submissions:v1'
 const BOOKMARK_STORAGE_KEY = 'stem-leet-code:bookmarks:v1'
 const NOTES_STORAGE_KEY = 'stem-leet-code:notes:v1'
+const PROOF_NOTES_STORAGE_KEY = 'stem-leet-code:proof-notes:v1'
+const PROOF_CHECKLIST_STORAGE_KEY = 'stem-leet-code:proof-checklist:v1'
 const HINT_REVEALS_STORAGE_KEY = 'stem-leet-code:hint-reveals:v1'
 const CONTEST_START_STORAGE_KEY = 'stem-leet-code:contest-start:v1'
+const MOCK_START_STORAGE_KEY = 'stem-leet-code:mock-start:v1'
+const MOCK_PROBLEMS_STORAGE_KEY = 'stem-leet-code:mock-problems:v1'
+const MOCK_TOPIC_STORAGE_KEY = 'stem-leet-code:mock-topic:v1'
+const MOCK_DURATION_STORAGE_KEY = 'stem-leet-code:mock-duration:v1'
 const DISCUSSION_STORAGE_KEY = 'stem-leet-code:discussion:v1'
 const DISCUSSION_VOTER_KEY = 'stem-leet-code:discussion-voter:v1'
 
@@ -214,6 +228,15 @@ function minutesAndSeconds(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
+function randomPickProblemIds(problemIds: string[], count: number): string[] {
+  const copy = [...problemIds]
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy.slice(0, Math.min(count, copy.length))
+}
+
 export default function App() {
   const [view, setView] = useState<TopView>('problems')
   const [query, setQuery] = useState('')
@@ -249,6 +272,15 @@ export default function App() {
     return safeRead<Record<string, string>>(NOTES_STORAGE_KEY, {})
   })
 
+  const [proofNotes, setProofNotes] = useState<Record<string, string>>(() => {
+    if (typeof window === 'undefined') return {}
+    return safeRead<Record<string, string>>(PROOF_NOTES_STORAGE_KEY, {})
+  })
+  const [proofChecklist, setProofChecklist] = useState<Record<string, ProofChecklist>>(() => {
+    if (typeof window === 'undefined') return {}
+    return safeRead<Record<string, ProofChecklist>>(PROOF_CHECKLIST_STORAGE_KEY, {})
+  })
+
   const [hintReveals, setHintReveals] = useState<Record<string, number>>(() => {
     if (typeof window === 'undefined') return {}
     return safeRead<Record<string, number>>(HINT_REVEALS_STORAGE_KEY, {})
@@ -257,6 +289,23 @@ export default function App() {
   const [contestStartAt, setContestStartAt] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
     return safeRead<string | null>(CONTEST_START_STORAGE_KEY, null)
+  })
+
+  const [mockStartAt, setMockStartAt] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return safeRead<string | null>(MOCK_START_STORAGE_KEY, null)
+  })
+  const [mockProblemIds, setMockProblemIds] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return []
+    return safeRead<string[]>(MOCK_PROBLEMS_STORAGE_KEY, [])
+  })
+  const [mockTopic, setMockTopic] = useState<'All' | string>(() => {
+    if (typeof window === 'undefined') return 'All'
+    return safeRead<'All' | string>(MOCK_TOPIC_STORAGE_KEY, 'All')
+  })
+  const [mockDurationMinutes, setMockDurationMinutes] = useState<number>(() => {
+    if (typeof window === 'undefined') return 120
+    return safeRead<number>(MOCK_DURATION_STORAGE_KEY, 120)
   })
 
   const [discussionThreads, setDiscussionThreads] = useState<DiscussionThread[]>(() => {
@@ -350,6 +399,13 @@ export default function App() {
     filteredProblems[0] ??
     STEM_PROBLEMS[0]
   const selectedProblemNote = notes[selectedProblem.id] ?? ''
+  const selectedProofNote = proofNotes[selectedProblem.id] ?? ''
+  const selectedProofChecklist = proofChecklist[selectedProblem.id] ?? {
+    theoremBuilt: false,
+    edgeCasesCovered: false,
+    complexityArgued: false,
+    finalReviewDone: false,
+  }
   const revealedHints = hintReveals[selectedProblem.id] ?? 0
   const isBookmarked = bookmarks.includes(selectedProblem.id)
 
@@ -434,6 +490,70 @@ export default function App() {
     }
     return solved.size
   }, [contestSubmissionScope])
+
+  const hardProblems = useMemo(() => {
+    return STEM_PROBLEMS.filter((problem) => problem.difficulty === 'Hard')
+  }, [])
+
+  const mockAvailableTopics = useMemo(() => {
+    return ['All', ...Array.from(new Set(hardProblems.map((problem) => problem.topic))).sort()]
+  }, [hardProblems])
+
+  const mockProblems = useMemo(() => {
+    return mockProblemIds
+      .map((problemId) => STEM_PROBLEMS.find((problem) => problem.id === problemId))
+      .filter((problem): problem is StemProblem => Boolean(problem))
+  }, [mockProblemIds])
+
+  const mockDurationMs = mockDurationMinutes * 60 * 1000
+  const mockRemainingMs = useMemo(() => {
+    if (!mockStartAt) return mockDurationMs
+    const elapsed = nowTs - new Date(mockStartAt).getTime()
+    return Math.max(0, mockDurationMs - elapsed)
+  }, [mockDurationMs, mockStartAt, nowTs])
+
+  const mockSubmissionScope = useMemo(() => {
+    if (!mockStartAt || mockProblems.length === 0) return []
+    const start = new Date(mockStartAt).getTime()
+    const mockIds = new Set(mockProblems.map((problem) => problem.id))
+    return submissions.filter(
+      (submission) =>
+        mockIds.has(submission.problemId) &&
+        new Date(submission.submittedAt).getTime() >= start
+    )
+  }, [mockProblems, mockStartAt, submissions])
+
+  const mockSolvedCount = useMemo(() => {
+    const solved = new Set<string>()
+    for (const submission of mockSubmissionScope) {
+      if (submission.status === 'Accepted') solved.add(submission.problemId)
+    }
+    return solved.size
+  }, [mockSubmissionScope])
+
+  const leanSourceChecks = useMemo(() => {
+    if (language !== 'lean4') {
+      return {
+        hasDefinition: false,
+        hasTheoremOrLemma: false,
+        hasSorryOrAdmit: false,
+        hasJsBridge: false,
+      }
+    }
+
+    const escapedName = selectedProblem.functionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const hasDefinition = new RegExp(`\\bdef\\s+${escapedName}\\b`).test(currentSource)
+    const hasTheoremOrLemma = /\b(theorem|lemma)\s+[A-Za-z0-9_']+\b[\s\S]*?:=\s*by/.test(currentSource)
+    const hasSorryOrAdmit = /\b(sorry|admit)\b/.test(currentSource)
+    const hasJsBridge = /\/-\!\s*JS_SOLVER[\s\S]*-\//m.test(currentSource)
+
+    return {
+      hasDefinition,
+      hasTheoremOrLemma,
+      hasSorryOrAdmit,
+      hasJsBridge,
+    }
+  }, [currentSource, language, selectedProblem.functionName])
 
   const progressByDifficulty = useMemo(() => {
     const totals: Record<Difficulty, number> = { Easy: 0, Medium: 0, Hard: 0 }
@@ -581,6 +701,13 @@ export default function App() {
     setCommunityMessage('Contest timer finished. Session has ended.')
   }, [contestRemainingMs, contestStartAt])
 
+  useEffect(() => {
+    if (!mockStartAt || mockRemainingMs > 0) return
+    setMockStartAt(null)
+    safeWrite(MOCK_START_STORAGE_KEY, null)
+    setCommunityMessage('Mock exam finished. Review your submissions and proof notes.')
+  }, [mockRemainingMs, mockStartAt])
+
   const refreshLeaderboard = async () => {
     setCommunityLoading(true)
     const data = await communityService.listLeaderboard(50)
@@ -601,6 +728,34 @@ export default function App() {
     setNotes((prev) => {
       const next = { ...prev, [problemId]: value }
       safeWrite(NOTES_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  const updateProofNote = (problemId: string, value: string) => {
+    setProofNotes((prev) => {
+      const next = { ...prev, [problemId]: value }
+      safeWrite(PROOF_NOTES_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  const updateProofChecklistItem = (problemId: string, patch: Partial<ProofChecklist>) => {
+    setProofChecklist((prev) => {
+      const current = prev[problemId] ?? {
+        theoremBuilt: false,
+        edgeCasesCovered: false,
+        complexityArgued: false,
+        finalReviewDone: false,
+      }
+      const next = {
+        ...prev,
+        [problemId]: {
+          ...current,
+          ...patch,
+        },
+      }
+      safeWrite(PROOF_CHECKLIST_STORAGE_KEY, next)
       return next
     })
   }
@@ -642,6 +797,44 @@ export default function App() {
     setContestStartAt(null)
     safeWrite(CONTEST_START_STORAGE_KEY, null)
     setCommunityMessage('Contest session ended.')
+  }
+
+  const startMockExam = () => {
+    const pool = hardProblems.filter((problem) => mockTopic === 'All' || problem.topic === mockTopic)
+    const fallbackPool = pool.length > 0 ? pool : hardProblems
+    const pickedIds = randomPickProblemIds(fallbackPool.map((problem) => problem.id), 6)
+
+    if (pickedIds.length === 0) {
+      setCommunityMessage('No hard problems available for this mock filter.')
+      return
+    }
+
+    const started = new Date().toISOString()
+    setMockProblemIds(pickedIds)
+    safeWrite(MOCK_PROBLEMS_STORAGE_KEY, pickedIds)
+    setMockStartAt(started)
+    safeWrite(MOCK_START_STORAGE_KEY, started)
+    safeWrite(MOCK_TOPIC_STORAGE_KEY, mockTopic)
+    safeWrite(MOCK_DURATION_STORAGE_KEY, mockDurationMinutes)
+    setCommunityMessage('Mock exam started. Timer is running.')
+  }
+
+  const endMockExam = () => {
+    setMockStartAt(null)
+    safeWrite(MOCK_START_STORAGE_KEY, null)
+    setCommunityMessage('Mock exam ended.')
+  }
+
+  const appendLeanProofSkeleton = () => {
+    if (language !== 'lean4') {
+      setLanguage('lean4')
+      setCommunityMessage('Switched to Lean4. Add proof skeleton now.')
+      return
+    }
+
+    const skeleton = `\n\nlemma ${selectedProblem.functionName}_edge_case : True := by\n  -- TODO: formalize a key edge case\n  sorry\n\nlemma ${selectedProblem.functionName}_complexity_note : True := by\n  -- TODO: encode complexity argument assumptions\n  sorry\n`
+    updateSource(`${currentSource}${skeleton}`)
+    setCommunityMessage('Lean proof skeleton appended to editor.')
   }
 
   const persistDiscussionThreads = (updater: (previous: DiscussionThread[]) => DiscussionThread[]) => {
@@ -974,6 +1167,13 @@ export default function App() {
             Contest
           </button>
           <button
+            className={view === 'mock' ? 'nav-pill active' : 'nav-pill'}
+            type="button"
+            onClick={() => setView('mock')}
+          >
+            Mock Exam
+          </button>
+          <button
             className={view === 'reviews' ? 'nav-pill active' : 'nav-pill'}
             type="button"
             onClick={() => setView('reviews')}
@@ -1206,6 +1406,13 @@ export default function App() {
                 >
                   Notes
                 </button>
+                <button
+                  type="button"
+                  className={activeTab === 'proof' ? 'tab-btn active' : 'tab-btn'}
+                  onClick={() => setActiveTab('proof')}
+                >
+                  Proof Mode
+                </button>
               </div>
 
               <div className="statement-content">
@@ -1333,6 +1540,113 @@ export default function App() {
                       placeholder="Write approach ideas, mistakes, proofs, and optimizations..."
                       value={selectedProblemNote}
                       onChange={(event) => updateNote(selectedProblem.id, event.target.value)}
+                    />
+                  </div>
+                )}
+
+                {activeTab === 'proof' && (
+                  <div className="proof-tab">
+                    {language !== 'lean4' ? (
+                      <div className="proof-nonlean">
+                        <p className="muted">
+                          Proof Mode is optimized for Lean4 submissions. Switch language to activate automated proof checks.
+                        </p>
+                        <button
+                          className="btn secondary tiny"
+                          type="button"
+                          onClick={() => onLanguageChange('lean4')}
+                        >
+                          Switch To Lean4
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="proof-auto-checks">
+                          <span className={`status-chip ${leanSourceChecks.hasDefinition ? 'status-ok' : 'status-warn'}`}>
+                            def {leanSourceChecks.hasDefinition ? 'found' : 'missing'}
+                          </span>
+                          <span className={`status-chip ${leanSourceChecks.hasTheoremOrLemma ? 'status-ok' : 'status-warn'}`}>
+                            theorem/lemma {leanSourceChecks.hasTheoremOrLemma ? 'found' : 'missing'}
+                          </span>
+                          <span className={`status-chip ${leanSourceChecks.hasJsBridge ? 'status-ok' : 'status-warn'}`}>
+                            JS bridge {leanSourceChecks.hasJsBridge ? 'found' : 'missing'}
+                          </span>
+                          <span className={`status-chip ${leanSourceChecks.hasSorryOrAdmit ? 'status-warn' : 'status-ok'}`}>
+                            sorry/admit {leanSourceChecks.hasSorryOrAdmit ? 'present' : 'clean'}
+                          </span>
+                        </div>
+
+                        <div className="proof-checklist-grid">
+                          <label className="proof-check-item">
+                            <input
+                              type="checkbox"
+                              checked={selectedProofChecklist.theoremBuilt}
+                              onChange={(event) =>
+                                updateProofChecklistItem(selectedProblem.id, { theoremBuilt: event.target.checked })
+                              }
+                            />
+                            Theorem/Lemma statement finalized
+                          </label>
+                          <label className="proof-check-item">
+                            <input
+                              type="checkbox"
+                              checked={selectedProofChecklist.edgeCasesCovered}
+                              onChange={(event) =>
+                                updateProofChecklistItem(selectedProblem.id, { edgeCasesCovered: event.target.checked })
+                              }
+                            />
+                            Edge-case proof obligations checked
+                          </label>
+                          <label className="proof-check-item">
+                            <input
+                              type="checkbox"
+                              checked={selectedProofChecklist.complexityArgued}
+                              onChange={(event) =>
+                                updateProofChecklistItem(selectedProblem.id, { complexityArgued: event.target.checked })
+                              }
+                            />
+                            Complexity/termination argument written
+                          </label>
+                          <label className="proof-check-item">
+                            <input
+                              type="checkbox"
+                              checked={selectedProofChecklist.finalReviewDone}
+                              onChange={(event) =>
+                                updateProofChecklistItem(selectedProblem.id, { finalReviewDone: event.target.checked })
+                              }
+                            />
+                            Final proof review complete
+                          </label>
+                        </div>
+
+                        <div className="proof-actions">
+                          <button className="btn ghost tiny" type="button" onClick={appendLeanProofSkeleton}>
+                            Append Proof Skeleton
+                          </button>
+                          <button
+                            className="btn ghost tiny"
+                            type="button"
+                            onClick={() =>
+                              updateProofChecklistItem(selectedProblem.id, {
+                                theoremBuilt: true,
+                                edgeCasesCovered: true,
+                                complexityArgued: true,
+                                finalReviewDone: true,
+                              })
+                            }
+                          >
+                            Mark Checklist Complete
+                          </button>
+                        </div>
+                      </>
+                    )}
+
+                    <p className="muted">Proof notes are local and separate from regular notes.</p>
+                    <textarea
+                      className="notes-editor"
+                      placeholder="Outline invariants, lemmas, rewrite steps, and any assumptions that must be discharged."
+                      value={selectedProofNote}
+                      onChange={(event) => updateProofNote(selectedProblem.id, event.target.value)}
                     />
                   </div>
                 )}
@@ -1603,6 +1917,148 @@ export default function App() {
               <li>Fixed weekly set generated deterministically for fairness.</li>
               <li>Session timer starts when you click start and auto-ends at 90 minutes.</li>
               <li>Score proxy: solved count and runtime quality from accepted submissions.</li>
+            </ul>
+          </section>
+        </main>
+      )}
+
+      {view === 'mock' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Mock Exam (Hard)</h1>
+              <div className="contest-actions">
+                {mockStartAt ? (
+                  <button className="btn ghost tiny" type="button" onClick={endMockExam}>
+                    End Mock
+                  </button>
+                ) : (
+                  <button className="btn secondary tiny" type="button" onClick={startMockExam}>
+                    Start Mock
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="mock-controls">
+              <label>
+                Topic
+                <select
+                  value={mockTopic}
+                  onChange={(event) => {
+                    const next = event.target.value
+                    setMockTopic(next)
+                    safeWrite(MOCK_TOPIC_STORAGE_KEY, next)
+                  }}
+                >
+                  {mockAvailableTopics.map((topic) => (
+                    <option key={`mock-topic-${topic}`} value={topic}>{topic}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Duration (minutes)
+                <input
+                  type="number"
+                  min={30}
+                  max={240}
+                  step={15}
+                  value={mockDurationMinutes}
+                  onChange={(event) => {
+                    const next = Number(event.target.value)
+                    const clamped = Math.min(240, Math.max(30, Number.isFinite(next) ? next : 120))
+                    setMockDurationMinutes(clamped)
+                    safeWrite(MOCK_DURATION_STORAGE_KEY, clamped)
+                  }}
+                />
+              </label>
+            </div>
+
+            <div className="contest-summary">
+              <span className={`status-chip ${mockStartAt ? 'status-warn' : 'status-neutral'}`}>
+                {mockStartAt ? 'Mock Running' : 'Mock Idle'}
+              </span>
+              <span className="meta-pill">Time Left: {minutesAndSeconds(mockRemainingMs)}</span>
+              <span className="meta-pill">Solved: {mockSolvedCount}/{mockProblems.length || 6}</span>
+            </div>
+
+            {mockProblems.length > 0 ? (
+              <table className="leaderboard-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Problem</th>
+                    <th>Topic</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mockProblems.map((problem) => {
+                    const status = problemStatusMap.get(problem.id) ?? 'Unsolved'
+                    return (
+                      <tr key={`mock-${problem.id}`}>
+                        <td>{problem.id}</td>
+                        <td>{problem.title}</td>
+                        <td>{problem.topic}</td>
+                        <td>{status}</td>
+                        <td>
+                          <button
+                            className="btn ghost tiny"
+                            type="button"
+                            onClick={() => {
+                              setView('problems')
+                              setSelectedProblemId(problem.id)
+                              setActiveTab('description')
+                            }}
+                          >
+                            Open
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <p className="muted">Start a mock exam to generate a hard-problem set.</p>
+            )}
+
+            {mockStartAt && (
+              <>
+                <h2>Mock Submissions</h2>
+                <table className="submissions-table">
+                  <thead>
+                    <tr>
+                      <th>Problem</th>
+                      <th>Status</th>
+                      <th>Passed</th>
+                      <th>Runtime</th>
+                      <th>Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mockSubmissionScope.slice(0, 40).map((submission) => (
+                      <tr key={`mock-sub-${submission.id}`}>
+                        <td>{submission.problemTitle}</td>
+                        <td>{submission.status}</td>
+                        <td>{submission.passed}/{submission.total}</td>
+                        <td>{submission.runtimeMs} ms</td>
+                        <td>{new Date(submission.submittedAt).toLocaleTimeString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Mock Exam Rules</h2>
+            <ul className="statement-list">
+              <li>Mock sets sample only hard problems to simulate advanced course exams.</li>
+              <li>You can filter by topic or run cross-topic integrated exams.</li>
+              <li>Use Proof Mode inside each problem for Lean-based formalization workflow.</li>
             </ul>
           </section>
         </main>

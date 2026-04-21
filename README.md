@@ -26,8 +26,10 @@ LeetCode-style STEM coding practice platform with in-browser judging, subject-dr
 - LeetCode-style productivity systems:
   - advanced catalog filters (difficulty, topic, tag, status, bookmark-only)
   - per-problem bookmarks, progressive hints, and private notes tab
+  - proof mode tab with Lean readiness checks, checklist, and proof-notes workflow
   - daily challenge with streak tracking
   - weekly timed contest mode with countdown and scoped contest submissions
+  - timed hard-problem mock exams (topic filtered)
   - progress dashboard by difficulty/topic plus recent activity
   - curated study-plan tracks (Group Theory, Linear Algebra, Probability/Statistics, Regression)
 

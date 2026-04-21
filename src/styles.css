@@ -424,6 +424,51 @@ textarea {
   gap: 0.55rem;
 }
 
+.proof-tab {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.proof-nonlean {
+  border: 1px dashed #d3dceb;
+  border-radius: 10px;
+  padding: 0.65rem 0.72rem;
+  background: #fbfcff;
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+
+.proof-auto-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.proof-checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.proof-check-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid #e2e8f2;
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem;
+  background: #ffffff;
+  font-size: 0.82rem;
+  color: #3e4e67;
+}
+
+.proof-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
 .notes-editor {
   width: 100%;
   min-height: 240px;
@@ -688,6 +733,28 @@ textarea {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+.mock-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0.55rem 0 0.45rem;
+}
+
+.mock-controls label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: #4c596d;
+}
+
+.mock-controls select,
+.mock-controls input {
+  border: 1px solid #d6dce7;
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+  background: #ffffff;
 }
 
 .discuss-filter {
@@ -1069,11 +1136,19 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .proof-checklist-grid {
+    grid-template-columns: 1fr;
+  }
+
   .catalog-filter-grid {
     grid-template-columns: 1fr;
   }
 
   .progress-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mock-controls {
     grid-template-columns: 1fr;
   }
 
