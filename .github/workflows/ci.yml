@@ -9,6 +9,7 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
       VITE_COMMUNITY_MODE: local
     steps:
       - name: Checkout
