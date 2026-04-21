@@ -12,9 +12,10 @@ import type {
   StemProblem,
 } from './types'
 
-type PanelTab = 'description' | 'editorial' | 'submissions'
-type TopView = 'problems' | 'leaderboard' | 'reviews'
+type PanelTab = 'description' | 'editorial' | 'submissions' | 'notes'
+type TopView = 'problems' | 'daily' | 'contest' | 'leaderboard' | 'reviews' | 'progress'
 type AuthMode = 'signin' | 'signup'
+type StatusFilter = 'All' | 'Solved' | 'Attempted' | 'Unsolved'
 
 interface ReviewDraft {
   verdict: ReviewInput['verdict']
@@ -26,6 +27,10 @@ interface ReviewDraft {
 
 const SOURCE_STORAGE_KEY = 'stem-leet-code:sources:v1'
 const SUBMISSION_STORAGE_KEY = 'stem-leet-code:submissions:v1'
+const BOOKMARK_STORAGE_KEY = 'stem-leet-code:bookmarks:v1'
+const NOTES_STORAGE_KEY = 'stem-leet-code:notes:v1'
+const HINT_REVEALS_STORAGE_KEY = 'stem-leet-code:hint-reveals:v1'
+const CONTEST_START_STORAGE_KEY = 'stem-leet-code:contest-start:v1'
 
 const languageLabels: Record<Language, string> = {
   javascript: 'JavaScript',
@@ -96,15 +101,52 @@ function scoreChipClass(score: number): string {
   return 'score-chip low'
 }
 
+function toDateKey(input: Date): string {
+  return input.toISOString().slice(0, 10)
+}
+
+function dailyProblemForDate(date: Date): StemProblem {
+  const dayIndex = Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / 86_400_000)
+  return STEM_PROBLEMS[((dayIndex % STEM_PROBLEMS.length) + STEM_PROBLEMS.length) % STEM_PROBLEMS.length]
+}
+
+function createContestProblemSet(seed: number, count: number): StemProblem[] {
+  const picked: StemProblem[] = []
+  const used = new Set<number>()
+  let state = seed >>> 0
+
+  while (picked.length < Math.min(count, STEM_PROBLEMS.length)) {
+    state = (1664525 * state + 1013904223) >>> 0
+    const index = state % STEM_PROBLEMS.length
+    if (used.has(index)) continue
+    used.add(index)
+    picked.push(STEM_PROBLEMS[index])
+  }
+
+  return picked
+}
+
+function minutesAndSeconds(ms: number): string {
+  const safe = Math.max(0, Math.floor(ms / 1000))
+  const minutes = Math.floor(safe / 60)
+  const seconds = safe % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
 export default function App() {
   const [view, setView] = useState<TopView>('problems')
   const [query, setQuery] = useState('')
   const [difficultyFilter, setDifficultyFilter] = useState<'All' | Difficulty>('All')
+  const [topicFilter, setTopicFilter] = useState<'All' | string>('All')
+  const [tagFilter, setTagFilter] = useState<'All' | string>('All')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('All')
+  const [bookmarkOnly, setBookmarkOnly] = useState(false)
   const [selectedProblemId, setSelectedProblemId] = useState(STEM_PROBLEMS[0]?.id ?? '')
   const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE)
   const [activeTab, setActiveTab] = useState<PanelTab>('description')
   const [judgeResult, setJudgeResult] = useState<JudgeResult | null>(null)
   const [lastAction, setLastAction] = useState<'Run' | 'Submit' | null>(null)
+  const [nowTs, setNowTs] = useState(() => Date.now())
 
   const [sources, setSources] = useState<Record<string, string>>(() => {
     if (typeof window === 'undefined') return {}
@@ -114,6 +156,26 @@ export default function App() {
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>(() => {
     if (typeof window === 'undefined') return []
     return safeRead<SubmissionRecord[]>(SUBMISSION_STORAGE_KEY, [])
+  })
+
+  const [bookmarks, setBookmarks] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return []
+    return safeRead<string[]>(BOOKMARK_STORAGE_KEY, [])
+  })
+
+  const [notes, setNotes] = useState<Record<string, string>>(() => {
+    if (typeof window === 'undefined') return {}
+    return safeRead<Record<string, string>>(NOTES_STORAGE_KEY, {})
+  })
+
+  const [hintReveals, setHintReveals] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return {}
+    return safeRead<Record<string, number>>(HINT_REVEALS_STORAGE_KEY, {})
+  })
+
+  const [contestStartAt, setContestStartAt] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return safeRead<string | null>(CONTEST_START_STORAGE_KEY, null)
   })
 
   const [currentUser, setCurrentUser] = useState<CommunityUser | null>(null)
@@ -131,9 +193,38 @@ export default function App() {
   const [communityLoading, setCommunityLoading] = useState(false)
   const [communityMessage, setCommunityMessage] = useState<string | null>(null)
 
+  const acceptedProblemIds = useMemo(() => {
+    const solved = new Set<string>()
+    for (const submission of submissions) {
+      if (submission.status === 'Accepted') solved.add(submission.problemId)
+    }
+    return solved
+  }, [submissions])
+
+  const attemptedProblemIds = useMemo(() => {
+    return new Set(submissions.map((submission) => submission.problemId))
+  }, [submissions])
+
+  const availableTopics = useMemo(() => {
+    return ['All', ...Array.from(new Set(STEM_PROBLEMS.map((problem) => problem.topic))).sort()]
+  }, [])
+
+  const availableTags = useMemo(() => {
+    return ['All', ...Array.from(new Set(STEM_PROBLEMS.flatMap((problem) => problem.tags))).sort()]
+  }, [])
+
   const filteredProblems = useMemo(() => {
     return STEM_PROBLEMS.filter((problem) => {
       if (difficultyFilter !== 'All' && problem.difficulty !== difficultyFilter) return false
+      if (topicFilter !== 'All' && problem.topic !== topicFilter) return false
+      if (tagFilter !== 'All' && !problem.tags.includes(tagFilter)) return false
+      if (bookmarkOnly && !bookmarks.includes(problem.id)) return false
+
+      const isSolved = acceptedProblemIds.has(problem.id)
+      const isAttempted = attemptedProblemIds.has(problem.id)
+      if (statusFilter === 'Solved' && !isSolved) return false
+      if (statusFilter === 'Attempted' && (!isAttempted || isSolved)) return false
+      if (statusFilter === 'Unsolved' && isAttempted) return false
 
       if (!query.trim()) return true
       const needle = query.toLowerCase()
@@ -143,12 +234,25 @@ export default function App() {
         problem.tags.some((tag) => tag.toLowerCase().includes(needle))
       )
     })
-  }, [difficultyFilter, query])
+  }, [
+    acceptedProblemIds,
+    attemptedProblemIds,
+    bookmarkOnly,
+    bookmarks,
+    difficultyFilter,
+    query,
+    statusFilter,
+    tagFilter,
+    topicFilter,
+  ])
 
   const selectedProblem =
     STEM_PROBLEMS.find((problem) => problem.id === selectedProblemId) ??
     filteredProblems[0] ??
     STEM_PROBLEMS[0]
+  const selectedProblemNote = notes[selectedProblem.id] ?? ''
+  const revealedHints = hintReveals[selectedProblem.id] ?? 0
+  const isBookmarked = bookmarks.includes(selectedProblem.id)
 
   const currentSourceKey = buildKey(selectedProblem.id, language)
   const currentSource = sources[currentSourceKey] ?? getStarterCode(selectedProblem, language)
@@ -157,13 +261,120 @@ export default function App() {
     return submissions.filter((submission) => submission.problemId === selectedProblem.id)
   }, [selectedProblem.id, submissions])
 
-  const solvedCount = useMemo(() => {
-    const solved = new Set<string>()
+  const solvedCount = acceptedProblemIds.size
+
+  const dailyProblem = useMemo(() => dailyProblemForDate(new Date(nowTs)), [nowTs])
+  const dailyDateKey = useMemo(() => toDateKey(new Date(nowTs)), [nowTs])
+  const dailySolvedToday = useMemo(() => {
+    return submissions.some(
+      (submission) =>
+        submission.status === 'Accepted' &&
+        submission.problemId === dailyProblem.id &&
+        submission.submittedAt.slice(0, 10) === dailyDateKey
+    )
+  }, [dailyDateKey, dailyProblem.id, submissions])
+
+  const dailyStreak = useMemo(() => {
+    const acceptedMap = new Map<string, Set<string>>()
     for (const submission of submissions) {
+      if (submission.status !== 'Accepted') continue
+      const dateKey = submission.submittedAt.slice(0, 10)
+      const set = acceptedMap.get(dateKey) ?? new Set<string>()
+      set.add(submission.problemId)
+      acceptedMap.set(dateKey, set)
+    }
+
+    let streak = 0
+    const cursor = new Date(Date.UTC(
+      new Date(nowTs).getUTCFullYear(),
+      new Date(nowTs).getUTCMonth(),
+      new Date(nowTs).getUTCDate()
+    ))
+
+    while (true) {
+      const dateKey = toDateKey(cursor)
+      const targetProblem = dailyProblemForDate(cursor).id
+      const solvedSet = acceptedMap.get(dateKey)
+      if (!solvedSet || !solvedSet.has(targetProblem)) break
+      streak += 1
+      cursor.setUTCDate(cursor.getUTCDate() - 1)
+    }
+
+    return streak
+  }, [nowTs, submissions])
+
+  const contestProblems = useMemo(() => {
+    const date = new Date(nowTs)
+    const dayIndex = Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / 86_400_000)
+    const weekSeed = Math.floor(dayIndex / 7) + 911
+    return createContestProblemSet(weekSeed, 4)
+  }, [nowTs])
+
+  const contestDurationMs = 90 * 60 * 1000
+  const contestRemainingMs = useMemo(() => {
+    if (!contestStartAt) return contestDurationMs
+    const elapsed = nowTs - new Date(contestStartAt).getTime()
+    return Math.max(0, contestDurationMs - elapsed)
+  }, [contestDurationMs, contestStartAt, nowTs])
+
+  const contestSubmissionScope = useMemo(() => {
+    if (!contestStartAt) return []
+    const start = new Date(contestStartAt).getTime()
+    const contestIds = new Set(contestProblems.map((problem) => problem.id))
+    return submissions.filter(
+      (submission) =>
+        contestIds.has(submission.problemId) &&
+        new Date(submission.submittedAt).getTime() >= start
+    )
+  }, [contestProblems, contestStartAt, submissions])
+
+  const contestSolvedCount = useMemo(() => {
+    const solved = new Set<string>()
+    for (const submission of contestSubmissionScope) {
       if (submission.status === 'Accepted') solved.add(submission.problemId)
     }
     return solved.size
-  }, [submissions])
+  }, [contestSubmissionScope])
+
+  const progressByDifficulty = useMemo(() => {
+    const totals: Record<Difficulty, number> = { Easy: 0, Medium: 0, Hard: 0 }
+    const solved: Record<Difficulty, number> = { Easy: 0, Medium: 0, Hard: 0 }
+
+    for (const problem of STEM_PROBLEMS) {
+      totals[problem.difficulty] += 1
+      if (acceptedProblemIds.has(problem.id)) solved[problem.difficulty] += 1
+    }
+
+    return { totals, solved }
+  }, [acceptedProblemIds])
+
+  const progressByTopic = useMemo(() => {
+    const topicMap = new Map<string, { total: number; solved: number }>()
+    for (const problem of STEM_PROBLEMS) {
+      const next = topicMap.get(problem.topic) ?? { total: 0, solved: 0 }
+      next.total += 1
+      if (acceptedProblemIds.has(problem.id)) next.solved += 1
+      topicMap.set(problem.topic, next)
+    }
+
+    return Array.from(topicMap.entries())
+      .map(([topic, stats]) => ({ topic, ...stats }))
+      .sort((a, b) => b.solved - a.solved || a.topic.localeCompare(b.topic))
+  }, [acceptedProblemIds])
+
+  const problemStatusMap = useMemo(() => {
+    const map = new Map<string, StatusFilter>()
+    for (const problem of STEM_PROBLEMS) {
+      if (acceptedProblemIds.has(problem.id)) {
+        map.set(problem.id, 'Solved')
+      } else if (attemptedProblemIds.has(problem.id)) {
+        map.set(problem.id, 'Attempted')
+      } else {
+        map.set(problem.id, 'Unsolved')
+      }
+    }
+    return map
+  }, [acceptedProblemIds, attemptedProblemIds])
 
   const currentLeaderboardRank = useMemo(() => {
     if (!currentUser) return null
@@ -221,11 +432,83 @@ export default function App() {
     void loadData()
   }, [view, currentUser?.id])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowTs(Date.now())
+    }, 1000)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!contestStartAt || contestRemainingMs > 0) return
+    setContestStartAt(null)
+    safeWrite(CONTEST_START_STORAGE_KEY, null)
+    setCommunityMessage('Contest timer finished. Session has ended.')
+  }, [contestRemainingMs, contestStartAt])
+
   const refreshLeaderboard = async () => {
     setCommunityLoading(true)
     const data = await communityService.listLeaderboard(50)
     setLeaderboard(data)
     setCommunityLoading(false)
+  }
+
+  const toggleBookmark = (problemId: string) => {
+    setBookmarks((prev) => {
+      const exists = prev.includes(problemId)
+      const next = exists ? prev.filter((item) => item !== problemId) : [problemId, ...prev]
+      safeWrite(BOOKMARK_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  const updateNote = (problemId: string, value: string) => {
+    setNotes((prev) => {
+      const next = { ...prev, [problemId]: value }
+      safeWrite(NOTES_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  const revealHint = (problemId: string, maxHints: number) => {
+    setHintReveals((prev) => {
+      const current = prev[problemId] ?? 0
+      const nextValue = Math.min(maxHints, current + 1)
+      const next = { ...prev, [problemId]: nextValue }
+      safeWrite(HINT_REVEALS_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  const openDailyProblem = () => {
+    setView('problems')
+    setSelectedProblemId(dailyProblem.id)
+    setActiveTab('description')
+    setJudgeResult(null)
+  }
+
+  const openRandomProblem = () => {
+    const pool = filteredProblems.length > 0 ? filteredProblems : STEM_PROBLEMS
+    const next = pool[Math.floor(Math.random() * pool.length)]
+    if (!next) return
+    setSelectedProblemId(next.id)
+    setActiveTab('description')
+    setJudgeResult(null)
+  }
+
+  const startContest = () => {
+    const started = new Date().toISOString()
+    setContestStartAt(started)
+    safeWrite(CONTEST_START_STORAGE_KEY, started)
+    setCommunityMessage('Contest started: 90-minute timer is running.')
+  }
+
+  const endContest = () => {
+    setContestStartAt(null)
+    safeWrite(CONTEST_START_STORAGE_KEY, null)
+    setCommunityMessage('Contest session ended.')
   }
 
   const refreshReviewQueue = async () => {
@@ -450,17 +733,39 @@ export default function App() {
             Leaderboard
           </button>
           <button
+            className={view === 'daily' ? 'nav-pill active' : 'nav-pill'}
+            type="button"
+            onClick={() => setView('daily')}
+          >
+            Daily
+          </button>
+          <button
+            className={view === 'contest' ? 'nav-pill active' : 'nav-pill'}
+            type="button"
+            onClick={() => setView('contest')}
+          >
+            Contest
+          </button>
+          <button
             className={view === 'reviews' ? 'nav-pill active' : 'nav-pill'}
             type="button"
             onClick={() => setView('reviews')}
           >
             Peer Review
           </button>
+          <button
+            className={view === 'progress' ? 'nav-pill active' : 'nav-pill'}
+            type="button"
+            onClick={() => setView('progress')}
+          >
+            Progress
+          </button>
         </nav>
 
         <div className="topbar-right">
           <div className="top-stats">
             Solved {solvedCount}/{STEM_PROBLEMS.length}
+            <span className="top-inline-stat">Streak {dailyStreak}</span>
             <span className="mode-pill">{communityService.mode.toUpperCase()}</span>
           </div>
 
@@ -502,16 +807,54 @@ export default function App() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
-              <select
-                className="difficulty-select"
-                value={difficultyFilter}
-                onChange={(event) => setDifficultyFilter(event.target.value as 'All' | Difficulty)}
-              >
-                <option value="All">All Difficulties</option>
-                <option value="Easy">Easy</option>
-                <option value="Medium">Medium</option>
-                <option value="Hard">Hard</option>
-              </select>
+              <div className="catalog-filter-grid">
+                <select
+                  className="difficulty-select"
+                  value={difficultyFilter}
+                  onChange={(event) => setDifficultyFilter(event.target.value as 'All' | Difficulty)}
+                >
+                  <option value="All">All Difficulties</option>
+                  <option value="Easy">Easy</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Hard">Hard</option>
+                </select>
+                <select
+                  className="difficulty-select"
+                  value={topicFilter}
+                  onChange={(event) => setTopicFilter(event.target.value)}
+                >
+                  {availableTopics.map((topic) => (
+                    <option key={`topic-${topic}`} value={topic}>{topic}</option>
+                  ))}
+                </select>
+                <select
+                  className="difficulty-select"
+                  value={tagFilter}
+                  onChange={(event) => setTagFilter(event.target.value)}
+                >
+                  {availableTags.map((tag) => (
+                    <option key={`tag-${tag}`} value={tag}>{tag === 'All' ? 'All Tags' : tag}</option>
+                  ))}
+                </select>
+                <select
+                  className="difficulty-select"
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                >
+                  <option value="All">All Statuses</option>
+                  <option value="Solved">Solved</option>
+                  <option value="Attempted">Attempted</option>
+                  <option value="Unsolved">Unsolved</option>
+                </select>
+              </div>
+              <label className="bookmark-toggle">
+                <input
+                  type="checkbox"
+                  checked={bookmarkOnly}
+                  onChange={(event) => setBookmarkOnly(event.target.checked)}
+                />
+                Bookmarked Only
+              </label>
             </div>
 
             <div className="problem-table-wrap">
@@ -521,11 +864,14 @@ export default function App() {
                     <th>Title</th>
                     <th>Difficulty</th>
                     <th>Acceptance</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredProblems.map((problem) => {
                     const isSelected = problem.id === selectedProblem.id
+                    const status = problemStatusMap.get(problem.id) ?? 'Unsolved'
+                    const bookmarked = bookmarks.includes(problem.id)
                     return (
                       <tr
                         key={problem.id}
@@ -535,7 +881,7 @@ export default function App() {
                         <td>
                           <div className="problem-title-cell">
                             <span className="problem-id">{problem.id}</span>
-                            <span>{problem.title}</span>
+                            <span>{bookmarked ? '★ ' : ''}{problem.title}</span>
                           </div>
                         </td>
                         <td>
@@ -544,6 +890,18 @@ export default function App() {
                           </span>
                         </td>
                         <td>{problem.acceptance.toFixed(1)}%</td>
+                        <td>
+                          <span className={`status-chip ${
+                            status === 'Solved'
+                              ? 'status-ok'
+                              : status === 'Attempted'
+                                ? 'status-warn'
+                                : 'status-neutral'
+                          }`}
+                          >
+                            {status}
+                          </span>
+                        </td>
                       </tr>
                     )
                   })}
@@ -562,6 +920,19 @@ export default function App() {
                   </span>
                   <span className="meta-pill">{selectedProblem.topic}</span>
                   <span className="meta-pill">Acceptance {selectedProblem.acceptance.toFixed(1)}%</span>
+                  <button
+                    type="button"
+                    className="meta-action"
+                    onClick={() => toggleBookmark(selectedProblem.id)}
+                  >
+                    {isBookmarked ? '★ Bookmarked' : '☆ Bookmark'}
+                  </button>
+                  <button type="button" className="meta-action" onClick={openRandomProblem}>
+                    Random
+                  </button>
+                  <button type="button" className="meta-action" onClick={openDailyProblem}>
+                    Daily
+                  </button>
                 </div>
               </div>
 
@@ -586,6 +957,13 @@ export default function App() {
                   onClick={() => setActiveTab('submissions')}
                 >
                   Submissions
+                </button>
+                <button
+                  type="button"
+                  className={activeTab === 'notes' ? 'tab-btn active' : 'tab-btn'}
+                  onClick={() => setActiveTab('notes')}
+                >
+                  Notes
                 </button>
               </div>
 
@@ -623,6 +1001,27 @@ export default function App() {
                           {tag}
                         </span>
                       ))}
+                    </div>
+
+                    <h2>Hints</h2>
+                    <div className="hint-box">
+                      <button
+                        type="button"
+                        className="btn ghost tiny"
+                        onClick={() => revealHint(selectedProblem.id, selectedProblem.editorial.length)}
+                        disabled={revealedHints >= selectedProblem.editorial.length}
+                      >
+                        {revealedHints >= selectedProblem.editorial.length ? 'All hints revealed' : 'Reveal next hint'}
+                      </button>
+                      {revealedHints === 0 ? (
+                        <p className="muted">Hints are hidden. Reveal progressively.</p>
+                      ) : (
+                        <ol className="statement-list ordered">
+                          {selectedProblem.editorial.slice(0, revealedHints).map((line, index) => (
+                            <li key={`${selectedProblem.id}-hint-${index}`}>{line}</li>
+                          ))}
+                        </ol>
+                      )}
                     </div>
                   </>
                 )}
@@ -680,6 +1079,18 @@ export default function App() {
                         </tbody>
                       </table>
                     )}
+                  </div>
+                )}
+
+                {activeTab === 'notes' && (
+                  <div className="notes-tab">
+                    <p className="muted">Private notes for this problem (saved locally).</p>
+                    <textarea
+                      className="notes-editor"
+                      placeholder="Write approach ideas, mistakes, proofs, and optimizations..."
+                      value={selectedProblemNote}
+                      onChange={(event) => updateNote(selectedProblem.id, event.target.value)}
+                    />
                   </div>
                 )}
               </div>
@@ -782,6 +1193,252 @@ export default function App() {
                 {communityLoading ? <p className="muted">Syncing community systems...</p> : null}
               </div>
             </div>
+          </section>
+        </main>
+      )}
+
+      {view === 'daily' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Daily Challenge</h1>
+              <button className="btn ghost tiny" type="button" onClick={openDailyProblem}>
+                Open Problem
+              </button>
+            </div>
+            <p className="muted">
+              Daily challenge resets every UTC day. Complete it to extend your streak.
+            </p>
+
+            <div className="daily-card">
+              <p className="daily-date">{dailyDateKey}</p>
+              <h2>{dailyProblem.title}</h2>
+              <p className="muted">{dailyProblem.topic} · {dailyProblem.difficulty}</p>
+              <div className="daily-badges">
+                <span className={`status-chip ${dailySolvedToday ? 'status-ok' : 'status-neutral'}`}>
+                  {dailySolvedToday ? 'Completed Today' : 'Not Solved Yet'}
+                </span>
+                <span className="meta-pill">Streak: {dailyStreak} day{dailyStreak === 1 ? '' : 's'}</span>
+              </div>
+            </div>
+
+            <h2>Recent Daily Attempts</h2>
+            <table className="submissions-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Problem</th>
+                  <th>Status</th>
+                  <th>Runtime</th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissions
+                  .filter((submission) => submission.problemId === dailyProblem.id)
+                  .slice(0, 12)
+                  .map((submission) => (
+                    <tr key={`daily-${submission.id}`}>
+                      <td>{submission.submittedAt.slice(0, 10)}</td>
+                      <td>{submission.problemTitle}</td>
+                      <td>{submission.status}</td>
+                      <td>{submission.runtimeMs} ms</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Daily Strategy</h2>
+            <ul className="statement-list">
+              <li>Solve one daily challenge each day to build consistency.</li>
+              <li>Use `Run` first, then `Submit` once stable to keep your acceptance high.</li>
+              <li>Write notes after solving to preserve intuition and avoid repeating mistakes.</li>
+            </ul>
+          </section>
+        </main>
+      )}
+
+      {view === 'contest' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Weekly Timed Contest</h1>
+              <div className="contest-actions">
+                {contestStartAt ? (
+                  <button className="btn ghost tiny" type="button" onClick={endContest}>
+                    End Contest
+                  </button>
+                ) : (
+                  <button className="btn secondary tiny" type="button" onClick={startContest}>
+                    Start 90m Contest
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="contest-summary">
+              <span className={`status-chip ${contestStartAt ? 'status-warn' : 'status-neutral'}`}>
+                {contestStartAt ? 'Contest Running' : 'Contest Idle'}
+              </span>
+              <span className="meta-pill">Time Left: {minutesAndSeconds(contestRemainingMs)}</span>
+              <span className="meta-pill">Solved: {contestSolvedCount}/{contestProblems.length}</span>
+            </div>
+
+            <table className="leaderboard-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Problem</th>
+                  <th>Difficulty</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contestProblems.map((problem) => {
+                  const status = problemStatusMap.get(problem.id) ?? 'Unsolved'
+                  return (
+                    <tr key={`contest-${problem.id}`}>
+                      <td>{problem.id}</td>
+                      <td>{problem.title}</td>
+                      <td>{problem.difficulty}</td>
+                      <td>{status}</td>
+                      <td>
+                        <button
+                          className="btn ghost tiny"
+                          type="button"
+                          onClick={() => {
+                            setView('problems')
+                            setSelectedProblemId(problem.id)
+                            setActiveTab('description')
+                          }}
+                        >
+                          Open
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+
+            {contestStartAt && (
+              <>
+                <h2>Contest Submissions</h2>
+                <table className="submissions-table">
+                  <thead>
+                    <tr>
+                      <th>Problem</th>
+                      <th>Status</th>
+                      <th>Passed</th>
+                      <th>Runtime</th>
+                      <th>Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contestSubmissionScope.slice(0, 30).map((submission) => (
+                      <tr key={`contest-sub-${submission.id}`}>
+                        <td>{submission.problemTitle}</td>
+                        <td>{submission.status}</td>
+                        <td>{submission.passed}/{submission.total}</td>
+                        <td>{submission.runtimeMs} ms</td>
+                        <td>{new Date(submission.submittedAt).toLocaleTimeString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Contest Rules</h2>
+            <ul className="statement-list">
+              <li>Fixed weekly set generated deterministically for fairness.</li>
+              <li>Session timer starts when you click start and auto-ends at 90 minutes.</li>
+              <li>Score proxy: solved count and runtime quality from accepted submissions.</li>
+            </ul>
+          </section>
+        </main>
+      )}
+
+      {view === 'progress' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Progress Dashboard</h1>
+            </div>
+
+            <h2>Difficulty Progress</h2>
+            <div className="progress-grid">
+              {(['Easy', 'Medium', 'Hard'] as Difficulty[]).map((difficulty) => {
+                const solved = progressByDifficulty.solved[difficulty]
+                const total = progressByDifficulty.totals[difficulty]
+                const ratio = total === 0 ? 0 : Math.round((solved / total) * 100)
+                return (
+                  <div key={`progress-${difficulty}`} className="progress-card">
+                    <h3>{difficulty}</h3>
+                    <p>{solved}/{total} solved</p>
+                    <div className="progress-bar-track">
+                      <div className="progress-bar-fill" style={{ width: `${ratio}%` }} />
+                    </div>
+                    <p className="muted">{ratio}% complete</p>
+                  </div>
+                )
+              })}
+            </div>
+
+            <h2>Topic Coverage</h2>
+            <table className="leaderboard-table">
+              <thead>
+                <tr>
+                  <th>Topic</th>
+                  <th>Solved</th>
+                  <th>Total</th>
+                  <th>Completion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {progressByTopic.map((row) => {
+                  const completion = row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100)
+                  return (
+                    <tr key={`topic-progress-${row.topic}`}>
+                      <td>{row.topic}</td>
+                      <td>{row.solved}</td>
+                      <td>{row.total}</td>
+                      <td>{completion}%</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Recent Activity</h2>
+            <table className="submissions-table">
+              <thead>
+                <tr>
+                  <th>Problem</th>
+                  <th>Status</th>
+                  <th>Language</th>
+                  <th>Runtime</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.slice(0, 20).map((submission) => (
+                  <tr key={`activity-${submission.id}`}>
+                    <td>{submission.problemTitle}</td>
+                    <td>{submission.status}</td>
+                    <td>{languageLabels[submission.language]}</td>
+                    <td>{submission.runtimeMs} ms</td>
+                    <td>{new Date(submission.submittedAt).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </section>
         </main>
       )}

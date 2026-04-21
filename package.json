@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
+    "ci": "npm run type-check && npm run build",
     "deploy": "npm run build && gh-pages -d dist"
   },
   "dependencies": {

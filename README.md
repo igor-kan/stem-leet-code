@@ -21,6 +21,12 @@ LeetCode-style STEM coding practice platform with in-browser judging, subject-dr
   - leaderboard with composite ranking
   - peer verification queue (review others' submissions)
   - contributor scoring (solution + review quality + consensus alignment)
+- LeetCode-style productivity systems:
+  - advanced catalog filters (difficulty, topic, tag, status, bookmark-only)
+  - per-problem bookmarks, progressive hints, and private notes tab
+  - daily challenge with streak tracking
+  - weekly timed contest mode with countdown and scoped contest submissions
+  - progress dashboard by difficulty/topic plus recent activity
 
 ## Run Locally
 
@@ -45,3 +51,5 @@ If env vars are missing, the app runs in local fallback mode with browser storag
 ## Deployment
 
 Deployment is handled by `.github/workflows/pages.yml` on every push to `main`.
+
+Quality checks run in `.github/workflows/ci.yml` (`type-check` + `build`) for pushes and pull requests.
