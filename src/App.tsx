@@ -13,7 +13,15 @@ import type {
 } from './types'
 
 type PanelTab = 'description' | 'editorial' | 'submissions' | 'notes'
-type TopView = 'problems' | 'daily' | 'contest' | 'leaderboard' | 'reviews' | 'progress'
+type TopView =
+  | 'problems'
+  | 'daily'
+  | 'contest'
+  | 'leaderboard'
+  | 'reviews'
+  | 'progress'
+  | 'discuss'
+  | 'plans'
 type AuthMode = 'signin' | 'signup'
 type StatusFilter = 'All' | 'Solved' | 'Attempted' | 'Unsolved'
 
@@ -25,12 +33,39 @@ interface ReviewDraft {
   comment: string
 }
 
+interface DiscussionReply {
+  id: string
+  author: string
+  body: string
+  createdAt: string
+}
+
+interface DiscussionThread {
+  id: string
+  problemId: string
+  title: string
+  body: string
+  author: string
+  createdAt: string
+  votes: string[]
+  replies: DiscussionReply[]
+}
+
+interface StudyPlan {
+  id: string
+  title: string
+  summary: string
+  problemIds: string[]
+}
+
 const SOURCE_STORAGE_KEY = 'stem-leet-code:sources:v1'
 const SUBMISSION_STORAGE_KEY = 'stem-leet-code:submissions:v1'
 const BOOKMARK_STORAGE_KEY = 'stem-leet-code:bookmarks:v1'
 const NOTES_STORAGE_KEY = 'stem-leet-code:notes:v1'
 const HINT_REVEALS_STORAGE_KEY = 'stem-leet-code:hint-reveals:v1'
 const CONTEST_START_STORAGE_KEY = 'stem-leet-code:contest-start:v1'
+const DISCUSSION_STORAGE_KEY = 'stem-leet-code:discussion:v1'
+const DISCUSSION_VOTER_KEY = 'stem-leet-code:discussion-voter:v1'
 
 const languageLabels: Record<Language, string> = {
   javascript: 'JavaScript',
@@ -47,6 +82,48 @@ const defaultReviewDraft: ReviewDraft = {
   rigorScore: 8,
   comment: '',
 }
+
+const STUDY_PLANS: StudyPlan[] = [
+  {
+    id: 'plan-group-core',
+    title: 'Group Theory Core',
+    summary: 'From additive groups to cyclic generators, inverses, and subgroup criteria.',
+    problemIds: ['STEM-701', 'STEM-702', 'STEM-704', 'STEM-705', 'STEM-751', 'STEM-752', 'STEM-755', 'STEM-756'],
+  },
+  {
+    id: 'plan-linear-core',
+    title: 'Linear Algebra Core',
+    summary: 'Determinants, systems, matrix products, orthogonality, and eigen basics.',
+    problemIds: ['STEM-711', 'STEM-712', 'STEM-713', 'STEM-714', 'STEM-715', 'STEM-761', 'STEM-762', 'STEM-765', 'STEM-766'],
+  },
+  {
+    id: 'plan-prob-stats',
+    title: 'Probability + Statistics',
+    summary: 'Discrete distributions, Bayes, expectation, confidence intervals, and correlations.',
+    problemIds: [
+      'STEM-721',
+      'STEM-722',
+      'STEM-723',
+      'STEM-724',
+      'STEM-725',
+      'STEM-731',
+      'STEM-732',
+      'STEM-733',
+      'STEM-734',
+      'STEM-735',
+      'STEM-775',
+      'STEM-776',
+      'STEM-785',
+      'STEM-786',
+    ],
+  },
+  {
+    id: 'plan-regression-track',
+    title: 'Regression Analysis Track',
+    summary: 'Loss metrics, line fitting, slope/intercept, R^2, and model error diagnostics.',
+    problemIds: ['STEM-771', 'STEM-772', 'STEM-773', 'STEM-774', 'STEM-791', 'STEM-792', 'STEM-793', 'STEM-794', 'STEM-795', 'STEM-796'],
+  },
+]
 
 function safeRead<T>(key: string, fallback: T): T {
   try {
@@ -176,6 +253,24 @@ export default function App() {
   const [contestStartAt, setContestStartAt] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
     return safeRead<string | null>(CONTEST_START_STORAGE_KEY, null)
+  })
+
+  const [discussionThreads, setDiscussionThreads] = useState<DiscussionThread[]>(() => {
+    if (typeof window === 'undefined') return []
+    return safeRead<DiscussionThread[]>(DISCUSSION_STORAGE_KEY, [])
+  })
+  const [discussionProblemFilter, setDiscussionProblemFilter] = useState<'All' | string>('All')
+  const [discussionComposeProblemId, setDiscussionComposeProblemId] = useState(STEM_PROBLEMS[0]?.id ?? '')
+  const [newThreadTitle, setNewThreadTitle] = useState('')
+  const [newThreadBody, setNewThreadBody] = useState('')
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
+  const [discussionVoterId] = useState(() => {
+    if (typeof window === 'undefined') return 'guest-anon'
+    const existing = safeRead<string | null>(DISCUSSION_VOTER_KEY, null)
+    if (existing) return existing
+    const next = `guest-${Math.random().toString(36).slice(2, 10)}`
+    safeWrite(DISCUSSION_VOTER_KEY, next)
+    return next
   })
 
   const [currentUser, setCurrentUser] = useState<CommunityUser | null>(null)
@@ -382,6 +477,40 @@ export default function App() {
     return entry?.rank ?? null
   }, [currentUser, leaderboard])
 
+  const problemById = useMemo(() => {
+    return new Map(STEM_PROBLEMS.map((problem) => [problem.id, problem] as const))
+  }, [])
+
+  const discussionViewerId = currentUser?.id ?? discussionVoterId
+  const discussionPosts = useMemo(() => {
+    const scoped = discussionProblemFilter === 'All'
+      ? discussionThreads
+      : discussionThreads.filter((thread) => thread.problemId === discussionProblemFilter)
+
+    return [...scoped].sort((a, b) => {
+      if (b.votes.length !== a.votes.length) return b.votes.length - a.votes.length
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+  }, [discussionProblemFilter, discussionThreads])
+
+  const studyPlanProgress = useMemo(() => {
+    return STUDY_PLANS.map((plan) => {
+      const validProblemIds = plan.problemIds.filter((problemId) => problemById.has(problemId))
+      const solved = validProblemIds.filter((problemId) => acceptedProblemIds.has(problemId)).length
+      const total = validProblemIds.length
+      const ratio = total === 0 ? 0 : Math.round((solved / total) * 100)
+      const nextProblemId = validProblemIds.find((problemId) => !acceptedProblemIds.has(problemId)) ?? null
+      return {
+        ...plan,
+        validProblemIds,
+        solved,
+        total,
+        ratio,
+        nextProblemId,
+      }
+    })
+  }, [acceptedProblemIds, problemById])
+
   useEffect(() => {
     let mounted = true
 
@@ -509,6 +638,100 @@ export default function App() {
     setContestStartAt(null)
     safeWrite(CONTEST_START_STORAGE_KEY, null)
     setCommunityMessage('Contest session ended.')
+  }
+
+  const persistDiscussionThreads = (updater: (previous: DiscussionThread[]) => DiscussionThread[]) => {
+    setDiscussionThreads((prev) => {
+      const next = updater(prev)
+      safeWrite(DISCUSSION_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  const createDiscussionThread = () => {
+    const title = newThreadTitle.trim()
+    const body = newThreadBody.trim()
+    if (!title || !body) {
+      setCommunityMessage('Discussion thread needs both title and body.')
+      return
+    }
+
+    const nextThread: DiscussionThread = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      problemId: discussionComposeProblemId || selectedProblem.id,
+      title,
+      body,
+      author: currentUser?.username ?? 'guest',
+      createdAt: new Date().toISOString(),
+      votes: [],
+      replies: [],
+    }
+
+    persistDiscussionThreads((prev) => [nextThread, ...prev])
+    setNewThreadTitle('')
+    setNewThreadBody('')
+    setCommunityMessage('Discussion thread posted.')
+  }
+
+  const toggleDiscussionVote = (threadId: string) => {
+    const voterId = discussionViewerId
+    persistDiscussionThreads((prev) =>
+      prev.map((thread) => {
+        if (thread.id !== threadId) return thread
+        const hasVote = thread.votes.includes(voterId)
+        return {
+          ...thread,
+          votes: hasVote ? thread.votes.filter((vote) => vote !== voterId) : [...thread.votes, voterId],
+        }
+      })
+    )
+  }
+
+  const submitDiscussionReply = (threadId: string) => {
+    const body = (replyDrafts[threadId] ?? '').trim()
+    if (!body) {
+      setCommunityMessage('Reply cannot be empty.')
+      return
+    }
+
+    const reply: DiscussionReply = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      author: currentUser?.username ?? 'guest',
+      body,
+      createdAt: new Date().toISOString(),
+    }
+
+    persistDiscussionThreads((prev) =>
+      prev.map((thread) => {
+        if (thread.id !== threadId) return thread
+        return {
+          ...thread,
+          replies: [...thread.replies, reply],
+        }
+      })
+    )
+
+    setReplyDrafts((prev) => ({
+      ...prev,
+      [threadId]: '',
+    }))
+  }
+
+  const openNextPlanProblem = (problemId: string | null) => {
+    if (!problemId) {
+      setCommunityMessage('This study plan is already complete.')
+      return
+    }
+
+    if (!problemById.has(problemId)) {
+      setCommunityMessage(`Problem ${problemId} is not available in this build.`)
+      return
+    }
+
+    setView('problems')
+    setSelectedProblemId(problemId)
+    setActiveTab('description')
+    setJudgeResult(null)
   }
 
   const refreshReviewQueue = async () => {
@@ -759,6 +982,20 @@ export default function App() {
             onClick={() => setView('progress')}
           >
             Progress
+          </button>
+          <button
+            className={view === 'plans' ? 'nav-pill active' : 'nav-pill'}
+            type="button"
+            onClick={() => setView('plans')}
+          >
+            Study Plans
+          </button>
+          <button
+            className={view === 'discuss' ? 'nav-pill active' : 'nav-pill'}
+            type="button"
+            onClick={() => setView('discuss')}
+          >
+            Discuss
           </button>
         </nav>
 
@@ -1060,6 +1297,8 @@ export default function App() {
                                   className={`status-chip ${
                                     submission.status === 'Accepted'
                                       ? 'status-ok'
+                                      : submission.status === 'Proof Incomplete'
+                                        ? 'status-neutral'
                                       : submission.status === 'Wrong Answer'
                                         ? 'status-warn'
                                         : 'status-bad'
@@ -1141,6 +1380,8 @@ export default function App() {
                         className={`status-chip ${
                           judgeResult.status === 'Accepted'
                             ? 'status-ok'
+                            : judgeResult.status === 'Proof Incomplete'
+                              ? 'status-neutral'
                             : judgeResult.status === 'Wrong Answer'
                               ? 'status-warn'
                               : judgeResult.status === 'Language Not Supported'
@@ -1439,6 +1680,202 @@ export default function App() {
                 ))}
               </tbody>
             </table>
+          </section>
+        </main>
+      )}
+
+      {view === 'plans' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Study Plans</h1>
+            </div>
+            <p className="muted">
+              Structured tracks that mirror university sequencing and LeetCode-style topic roadmaps.
+            </p>
+
+            <div className="plan-list">
+              {studyPlanProgress.map((plan) => (
+                <article key={plan.id} className="plan-card">
+                  <div className="plan-header">
+                    <div>
+                      <h2>{plan.title}</h2>
+                      <p className="muted">{plan.summary}</p>
+                    </div>
+                    <button
+                      className="btn ghost tiny"
+                      type="button"
+                      onClick={() => openNextPlanProblem(plan.nextProblemId)}
+                    >
+                      {plan.nextProblemId ? 'Open Next' : 'Completed'}
+                    </button>
+                  </div>
+
+                  <div className="plan-progress-row">
+                    <span className="meta-pill">{plan.solved}/{plan.total} solved</span>
+                    <span className="meta-pill">{plan.ratio}% complete</span>
+                  </div>
+                  <div className="progress-bar-track">
+                    <div className="progress-bar-fill" style={{ width: `${plan.ratio}%` }} />
+                  </div>
+
+                  <div className="plan-chip-grid">
+                    {plan.validProblemIds.map((problemId) => {
+                      const problem = problemById.get(problemId)
+                      if (!problem) return null
+                      const solved = acceptedProblemIds.has(problemId)
+                      return (
+                        <button
+                          key={`${plan.id}-${problemId}`}
+                          type="button"
+                          className={solved ? 'plan-chip solved' : 'plan-chip'}
+                          onClick={() => openNextPlanProblem(problemId)}
+                        >
+                          {problem.id} · {problem.title}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Plan Usage</h2>
+            <ul className="statement-list">
+              <li>Use `Open Next` to follow recommended order without context switching.</li>
+              <li>Submit each problem to count toward solved-plan completion metrics.</li>
+              <li>Combine plans with Daily + Contest to mimic exam pressure and retention cycles.</li>
+            </ul>
+          </section>
+        </main>
+      )}
+
+      {view === 'discuss' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Discuss</h1>
+              <select
+                className="difficulty-select discuss-filter"
+                value={discussionProblemFilter}
+                onChange={(event) => setDiscussionProblemFilter(event.target.value)}
+              >
+                <option value="All">All Problems</option>
+                {STEM_PROBLEMS.map((problem) => (
+                  <option key={`discussion-filter-${problem.id}`} value={problem.id}>
+                    {problem.id} · {problem.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="discussion-compose">
+              <h2>Create Thread</h2>
+              <label className="auth-field">
+                Problem
+                <select
+                  value={discussionComposeProblemId}
+                  onChange={(event) => setDiscussionComposeProblemId(event.target.value)}
+                >
+                  {STEM_PROBLEMS.map((problem) => (
+                    <option key={`discussion-compose-${problem.id}`} value={problem.id}>
+                      {problem.id} · {problem.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="auth-field">
+                Title
+                <input
+                  type="text"
+                  value={newThreadTitle}
+                  onChange={(event) => setNewThreadTitle(event.target.value)}
+                  placeholder="State your approach question or proof issue..."
+                />
+              </label>
+              <label className="auth-field">
+                Body
+                <textarea
+                  className="discussion-body"
+                  value={newThreadBody}
+                  onChange={(event) => setNewThreadBody(event.target.value)}
+                  placeholder="Include assumptions, derivations, and where your reasoning breaks."
+                />
+              </label>
+              <button className="btn secondary" type="button" onClick={createDiscussionThread}>
+                Post Thread
+              </button>
+            </div>
+
+            <div className="discussion-list">
+              {discussionPosts.length === 0 ? (
+                <p className="muted">No threads yet for this filter.</p>
+              ) : (
+                discussionPosts.map((thread) => {
+                  const problem = problemById.get(thread.problemId)
+                  const hasUpvoted = thread.votes.includes(discussionViewerId)
+                  return (
+                    <article key={thread.id} className="discussion-card">
+                      <div className="discussion-head">
+                        <div>
+                          <h3>{thread.title}</h3>
+                          <p className="muted">
+                            {thread.problemId} · {problem?.title ?? 'Unknown Problem'} · by {thread.author}
+                          </p>
+                        </div>
+                        <button
+                          className={hasUpvoted ? 'btn ghost tiny voted' : 'btn ghost tiny'}
+                          type="button"
+                          onClick={() => toggleDiscussionVote(thread.id)}
+                        >
+                          ▲ {thread.votes.length}
+                        </button>
+                      </div>
+
+                      <p>{thread.body}</p>
+
+                      <div className="discussion-replies">
+                        {thread.replies.map((reply) => (
+                          <div key={reply.id} className="discussion-reply">
+                            <p className="muted">{reply.author} · {new Date(reply.createdAt).toLocaleString()}</p>
+                            <p>{reply.body}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <label className="auth-field">
+                        Reply
+                        <textarea
+                          className="discussion-reply-input"
+                          value={replyDrafts[thread.id] ?? ''}
+                          onChange={(event) =>
+                            setReplyDrafts((prev) => ({
+                              ...prev,
+                              [thread.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Challenge assumptions, provide counterexample, or validate derivation."
+                        />
+                      </label>
+                      <button className="btn primary" type="button" onClick={() => submitDiscussionReply(thread.id)}>
+                        Post Reply
+                      </button>
+                    </article>
+                  )
+                })
+              )}
+            </div>
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Discussion Norms</h2>
+            <ul className="statement-list">
+              <li>Prioritize reproducible logic: include formulas, counterexamples, and edge cases.</li>
+              <li>Use replies to validate or challenge proofs before final submit.</li>
+              <li>High-signal discussion improves verification quality and contributor trust.</li>
+            </ul>
           </section>
         </main>
       )}

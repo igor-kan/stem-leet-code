@@ -37,7 +37,7 @@ export interface CaseResult {
 }
 
 export interface JudgeResult {
-  status: 'Accepted' | 'Wrong Answer' | 'Runtime Error' | 'Language Not Supported'
+  status: 'Accepted' | 'Wrong Answer' | 'Runtime Error' | 'Language Not Supported' | 'Proof Incomplete'
   runtimeMs: number
   passed: number
   total: number

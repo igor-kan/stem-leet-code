@@ -42,7 +42,7 @@ function buildLean4Starter(problem: StemProblem): string {
     .join('')
   const returnType = inferLeanType(sampleExpected)
 
-  return `/-\nSTEM Leet Code Lean4 Bridge Mode\n\nThis web app runs in-browser and cannot execute a native Lean runtime directly.\nTo keep Lean4 workflow available, use this file as follows:\n1) Keep a Lean definition for \`${problem.functionName}\`.\n2) Put executable logic in the JS bridge block below.\n3) The checker runs hidden/public tests against that JS block.\n\nYou can still write Lean notes/proofs around this scaffold.\n-/\n\ndef ${problem.functionName}${argsSignature} : ${returnType} := by\n  sorry\n\n/-! JS_SOLVER\n${javascriptStarter}\n-/\n`
+  return `/-\nSTEM Leet Code Lean4 Bridge Mode\n\nThis web app runs in-browser and cannot execute a native Lean runtime directly.\nTo keep Lean4 workflow available, use this file as follows:\n1) Keep a Lean definition for \`${problem.functionName}\`.\n2) Include at least one theorem/lemma proof block and remove all \`sorry/admit\` on final submit.\n3) Put executable logic in the JS bridge block below.\n4) The checker runs hidden/public tests against that JS block.\n-/\n\ndef ${problem.functionName}${argsSignature} : ${returnType} := by\n  sorry\n\n-- Replace this with your own theorem or lemma before final submit.\ntheorem ${problem.functionName}_spec${argsSignature} : True := by\n  sorry\n\n/-! JS_SOLVER\n${javascriptStarter}\n-/\n`
 }
 
 export function getStarterCode(problem: StemProblem, language: Language): string {

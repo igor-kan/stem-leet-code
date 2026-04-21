@@ -15,18 +15,21 @@ LeetCode-style STEM coding practice platform with in-browser judging, subject-dr
   - Run mode (public tests)
   - Submit mode (public + hidden tests)
   - status, runtime, and per-case output
+  - Lean submit proof-quality gating (`theorem/lemma` presence and `sorry/admit` rejection)
 - Local persistence of editor code and submission history.
 - Community systems:
   - authentication (`Sign In` / `Sign Up`)
   - leaderboard with composite ranking
   - peer verification queue (review others' submissions)
   - contributor scoring (solution + review quality + consensus alignment)
+  - discuss board with problem-scoped threads, voting, and replies
 - LeetCode-style productivity systems:
   - advanced catalog filters (difficulty, topic, tag, status, bookmark-only)
   - per-problem bookmarks, progressive hints, and private notes tab
   - daily challenge with streak tracking
   - weekly timed contest mode with countdown and scoped contest submissions
   - progress dashboard by difficulty/topic plus recent activity
+  - curated study-plan tracks (Group Theory, Linear Algebra, Probability/Statistics, Regression)
 
 ## Run Locally
 

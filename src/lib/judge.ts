@@ -133,8 +133,31 @@ function extractLeanBridgeJavascript(sourceCode: string, functionName: string): 
   return { javascript }
 }
 
-function executeLean4(problem: StemProblem, sourceCode: string, testCases: TestCase[]): JudgeResult {
+function analyzeLeanProofQuality(sourceCode: string, functionName: string): { isValid: boolean; issues: string[] } {
+  const escapedName = functionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const hasDefinition = new RegExp(`\\bdef\\s+${escapedName}\\b`).test(sourceCode)
+  const hasTheoremOrLemma = /\b(theorem|lemma)\s+[A-Za-z0-9_']+\b[\s\S]*?:=\s*by/.test(sourceCode)
+  const hasSorryOrAdmit = /\b(sorry|admit)\b/.test(sourceCode)
+
+  const issues: string[] = []
+  if (!hasDefinition) issues.push(`missing required definition: def ${functionName}`)
+  if (!hasTheoremOrLemma) issues.push('missing theorem/lemma proof block (`theorem ... := by` or `lemma ... := by`)')
+  if (hasSorryOrAdmit) issues.push('contains `sorry` or `admit`; complete the proof terms')
+
+  return {
+    isValid: issues.length === 0,
+    issues,
+  }
+}
+
+function executeLean4(
+  problem: StemProblem,
+  sourceCode: string,
+  testCases: TestCase[],
+  submitMode: boolean
+): JudgeResult {
   const startedAt = performance.now()
+  const quality = analyzeLeanProofQuality(sourceCode, problem.functionName)
   const extracted = extractLeanBridgeJavascript(sourceCode, problem.functionName)
   if (!extracted.javascript) {
     return {
@@ -148,6 +171,34 @@ function executeLean4(problem: StemProblem, sourceCode: string, testCases: TestC
   }
 
   const result = executeJs(problem, extracted.javascript, testCases)
+
+  if (submitMode && result.status === 'Accepted' && !quality.isValid) {
+    return {
+      ...result,
+      status: 'Proof Incomplete',
+      runtimeMs: Math.round(performance.now() - startedAt),
+      message: `Lean submit checks failed: ${quality.issues.join('; ')}`,
+    }
+  }
+
+  if (result.status === 'Accepted' && quality.isValid) {
+    return {
+      ...result,
+      runtimeMs: Math.round(performance.now() - startedAt),
+      message: submitMode
+        ? 'Lean verification passed (tests + proof-quality checks).'
+        : 'Lean bridge tests passed. Submit also enforces proof-quality checks.',
+    }
+  }
+
+  if (result.status === 'Accepted' && !quality.isValid) {
+    return {
+      ...result,
+      runtimeMs: Math.round(performance.now() - startedAt),
+      message: `Tests passed. Lean quality warnings: ${quality.issues.join('; ')}`,
+    }
+  }
+
   return {
     ...result,
     runtimeMs: Math.round(performance.now() - startedAt),
@@ -165,7 +216,7 @@ export function runJudge(problem: StemProblem, language: Language, sourceCode: s
   }
 
   if (language === 'lean4') {
-    return executeLean4(problem, sourceCode, selectedTests)
+    return executeLean4(problem, sourceCode, selectedTests, submitMode)
   }
 
   return {

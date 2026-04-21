@@ -690,6 +690,10 @@ textarea {
   gap: 0.45rem;
 }
 
+.discuss-filter {
+  max-width: 340px;
+}
+
 .progress-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -724,6 +728,138 @@ textarea {
 .progress-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, #4f8dfc 0%, #2f6be2 100%);
+}
+
+.plan-list {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+  overflow: auto;
+  padding-right: 0.1rem;
+}
+
+.plan-card {
+  border: 1px solid #e3e9f3;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.plan-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.plan-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.plan-progress-row {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.plan-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.plan-chip {
+  border: 1px solid #d9e0ec;
+  border-radius: 8px;
+  background: #f9fbff;
+  color: #324761;
+  padding: 0.35rem 0.45rem;
+  text-align: left;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.plan-chip.solved {
+  border-color: #bee4cf;
+  background: #eefbf4;
+  color: #1d6d47;
+}
+
+.discussion-compose {
+  margin-top: 0.55rem;
+  border: 1px solid #e3e9f3;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.discussion-compose h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.discussion-body,
+.discussion-reply-input {
+  border: 1px solid #d6dce7;
+  border-radius: 8px;
+  padding: 0.42rem 0.54rem;
+  resize: vertical;
+  min-height: 88px;
+}
+
+.discussion-list {
+  margin-top: 0.78rem;
+  display: grid;
+  gap: 0.76rem;
+  overflow: auto;
+}
+
+.discussion-card {
+  border: 1px solid #e3e9f3;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.discussion-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.discussion-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.discussion-replies {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.discussion-reply {
+  border-left: 3px solid #d7e1f2;
+  background: #f8fbff;
+  border-radius: 8px;
+  padding: 0.42rem 0.58rem;
+}
+
+.discussion-reply p {
+  margin: 0.15rem 0;
+}
+
+.btn.voted {
+  border-color: #dfb675;
+  background: #fff2df;
+  color: #7b4c00;
 }
 
 .empty-state {
@@ -938,6 +1074,10 @@ textarea {
   }
 
   .progress-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-chip-grid {
     grid-template-columns: 1fr;
   }
 
