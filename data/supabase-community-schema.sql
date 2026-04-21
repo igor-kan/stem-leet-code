@@ -26,7 +26,7 @@ create table if not exists public.community_submissions (
   topic text not null,
   difficulty text not null check (difficulty in ('Easy', 'Medium', 'Hard')),
   language text not null,
-  status text not null check (status in ('Accepted', 'Wrong Answer', 'Runtime Error', 'Language Not Supported')),
+  status text not null check (status in ('Accepted', 'Wrong Answer', 'Runtime Error', 'Language Not Supported', 'Proof Incomplete')),
   passed integer not null default 0 check (passed >= 0),
   total integer not null default 0 check (total >= 0),
   runtime_ms integer not null default 0 check (runtime_ms >= 0),
@@ -34,6 +34,11 @@ create table if not exists public.community_submissions (
   source_code text not null default '',
   created_at timestamptz not null default now()
 );
+
+alter table public.community_submissions drop constraint if exists community_submissions_status_check;
+alter table public.community_submissions
+add constraint community_submissions_status_check
+check (status in ('Accepted', 'Wrong Answer', 'Runtime Error', 'Language Not Supported', 'Proof Incomplete'));
 
 create index if not exists idx_community_submissions_user on public.community_submissions(user_id);
 create index if not exists idx_community_submissions_problem on public.community_submissions(problem_id);
