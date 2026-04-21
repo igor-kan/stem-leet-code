@@ -9,9 +9,9 @@ LeetCode-style STEM coding practice platform with in-browser judging, subject-dr
 ## Features
 
 - LeetCode-like split layout: problem list, statement/editorial/submissions tabs, and code panel.
-- STEM-focused challenge bank across Physics, Electrical Engineering, Biology, Signal Processing, Bioinformatics, and Robotics.
-- Multi-language starter templates (`JavaScript`, `Python`, `C++`, `Java`).
-- In-browser judge for JavaScript with:
+- STEM-focused challenge bank across Physics, Electrical Engineering, Biology, Signal Processing, Bioinformatics, Robotics, Group Theory, Linear Algebra, Statistics, Probability, and Regression Analysis.
+- Multi-language starter templates (`JavaScript`, `Python`, `C++`, `Java`, `Lean4`).
+- In-browser judge for JavaScript and Lean4 bridge mode with:
   - Run mode (public tests)
   - Submit mode (public + hidden tests)
   - status, runtime, and per-case output

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { DEFAULT_LANGUAGE, STEM_PROBLEMS } from './data/problems'
 import { runJudge } from './lib/judge'
+import { getStarterCode } from './lib/starter-code'
 import type {
   Difficulty,
   JudgeResult,
@@ -19,6 +20,7 @@ const languageLabels: Record<Language, string> = {
   python: 'Python',
   cpp: 'C++',
   java: 'Java',
+  lean4: 'Lean4',
 }
 
 function safeRead<T>(key: string, fallback: T): T {
@@ -64,7 +66,7 @@ function ensureSourceMap(problem: StemProblem, language: Language, sources: Reco
   if (sources[key]) return sources
   return {
     ...sources,
-    [key]: problem.starterCode[language],
+    [key]: getStarterCode(problem, language),
   }
 }
 
@@ -107,7 +109,7 @@ export default function App() {
     STEM_PROBLEMS[0]
 
   const currentSourceKey = buildKey(selectedProblem.id, language)
-  const currentSource = sources[currentSourceKey] ?? selectedProblem.starterCode[language]
+  const currentSource = sources[currentSourceKey] ?? getStarterCode(selectedProblem, language)
 
   const scopedSubmissions = useMemo(() => {
     return submissions.filter((submission) => submission.problemId === selectedProblem.id)
@@ -185,7 +187,7 @@ export default function App() {
   }
 
   const resetCode = () => {
-    updateSource(selectedProblem.starterCode[language])
+    updateSource(getStarterCode(selectedProblem, language))
     setJudgeResult(null)
     setLastAction(null)
   }
@@ -416,6 +418,7 @@ export default function App() {
                   <option value="python">Python</option>
                   <option value="cpp">C++</option>
                   <option value="java">Java</option>
+                  <option value="lean4">Lean4</option>
                 </select>
               </div>
 

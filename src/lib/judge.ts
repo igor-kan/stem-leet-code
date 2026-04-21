@@ -1,4 +1,4 @@
-import type { JudgeResult, StemProblem, TestCase } from '../types'
+import type { JudgeResult, Language, StemProblem, TestCase } from '../types'
 
 function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -102,21 +102,78 @@ function executeJs(problem: StemProblem, sourceCode: string, testCases: TestCase
   }
 }
 
-export function runJudge(problem: StemProblem, language: string, sourceCode: string, submitMode: boolean): JudgeResult {
-  if (language !== 'javascript') {
+function extractLeanBridgeJavascript(sourceCode: string, functionName: string): { javascript: string | null; message?: string } {
+  const escapedName = functionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const hasDef = new RegExp(`\\bdef\\s+${escapedName}\\b`).test(sourceCode)
+
+  if (!hasDef) {
     return {
-      status: 'Language Not Supported',
-      runtimeMs: 0,
-      passed: 0,
-      total: 0,
-      caseResults: [],
-      message: 'In-browser execution currently supports JavaScript only. You can still draft other languages in the editor.',
+      javascript: null,
+      message: `Lean4 declaration missing. Add 'def ${functionName} ... := ...' in your submission.`,
     }
   }
 
+  const jsBlock = sourceCode.match(/\/-\!\s*JS_SOLVER\s*([\s\S]*?)\s*-\//m)
+  if (!jsBlock) {
+    return {
+      javascript: null,
+      message:
+        "Lean4 bridge block not found. Add '/-! JS_SOLVER ... -/' and place a JavaScript implementation inside.",
+    }
+  }
+
+  const javascript = jsBlock[1].trim()
+  if (!javascript) {
+    return {
+      javascript: null,
+      message: 'Lean4 bridge block is empty. Add a JavaScript implementation inside JS_SOLVER.',
+    }
+  }
+
+  return { javascript }
+}
+
+function executeLean4(problem: StemProblem, sourceCode: string, testCases: TestCase[]): JudgeResult {
+  const startedAt = performance.now()
+  const extracted = extractLeanBridgeJavascript(sourceCode, problem.functionName)
+  if (!extracted.javascript) {
+    return {
+      status: 'Runtime Error',
+      runtimeMs: Math.round(performance.now() - startedAt),
+      passed: 0,
+      total: testCases.length,
+      caseResults: [],
+      message: extracted.message,
+    }
+  }
+
+  const result = executeJs(problem, extracted.javascript, testCases)
+  return {
+    ...result,
+    runtimeMs: Math.round(performance.now() - startedAt),
+    message: result.message,
+  }
+}
+
+export function runJudge(problem: StemProblem, language: Language, sourceCode: string, submitMode: boolean): JudgeResult {
   const selectedTests = submitMode
     ? problem.testCases
     : problem.testCases.filter((testCase) => !testCase.hidden)
 
-  return executeJs(problem, sourceCode, selectedTests)
+  if (language === 'javascript') {
+    return executeJs(problem, sourceCode, selectedTests)
+  }
+
+  if (language === 'lean4') {
+    return executeLean4(problem, sourceCode, selectedTests)
+  }
+
+  return {
+    status: 'Language Not Supported',
+    runtimeMs: 0,
+    passed: 0,
+    total: 0,
+    caseResults: [],
+    message: 'In-browser execution currently supports JavaScript and Lean4 bridge mode.',
+  }
 }

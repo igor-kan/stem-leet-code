@@ -1,6 +1,6 @@
 export type Difficulty = 'Easy' | 'Medium' | 'Hard'
 
-export type Language = 'javascript' | 'python' | 'cpp' | 'java'
+export type Language = 'javascript' | 'python' | 'cpp' | 'java' | 'lean4'
 
 export interface TestCase {
   inputLabel: string
@@ -22,7 +22,7 @@ export interface StemProblem {
   constraints: string[]
   functionName: string
   numericTolerance?: number
-  starterCode: Record<Language, string>
+  starterCode: Partial<Record<Language, string>>
   editorial: string[]
   testCases: TestCase[]
 }
