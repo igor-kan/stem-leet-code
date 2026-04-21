@@ -66,6 +66,25 @@ interface ProofChecklist {
   finalReviewDone: boolean
 }
 
+interface RatingEvent {
+  id: string
+  mode: 'contest' | 'mock'
+  startedAt: string
+  endedAt: string
+  solved: number
+  total: number
+  acceptedRate: number
+  proofRate: number
+  delta: number
+  ratingAfter: number
+}
+
+interface RatingProfile {
+  rating: number
+  sessions: number
+  history: RatingEvent[]
+}
+
 const SOURCE_STORAGE_KEY = 'stem-leet-code:sources:v1'
 const SUBMISSION_STORAGE_KEY = 'stem-leet-code:submissions:v1'
 const BOOKMARK_STORAGE_KEY = 'stem-leet-code:bookmarks:v1'
@@ -78,6 +97,8 @@ const MOCK_START_STORAGE_KEY = 'stem-leet-code:mock-start:v1'
 const MOCK_PROBLEMS_STORAGE_KEY = 'stem-leet-code:mock-problems:v1'
 const MOCK_TOPIC_STORAGE_KEY = 'stem-leet-code:mock-topic:v1'
 const MOCK_DURATION_STORAGE_KEY = 'stem-leet-code:mock-duration:v1'
+const MOCK_COMPANY_TRACK_STORAGE_KEY = 'stem-leet-code:mock-company-track:v1'
+const RATING_PROFILE_STORAGE_KEY = 'stem-leet-code:rating-profile:v1'
 const DISCUSSION_STORAGE_KEY = 'stem-leet-code:discussion:v1'
 const DISCUSSION_VOTER_KEY = 'stem-leet-code:discussion-voter:v1'
 
@@ -142,6 +163,17 @@ const STUDY_PLANS: StudyPlan[] = [
     problemIds: ['STEM-771', 'STEM-772', 'STEM-773', 'STEM-774', 'STEM-791', 'STEM-792', 'STEM-793', 'STEM-794', 'STEM-795', 'STEM-796', 'STEM-797', 'STEM-798'],
   },
 ]
+
+const COMPANY_TRACKS = [
+  'All',
+  'Jane Street Quant',
+  'DeepMind Formal',
+  'NVIDIA Applied Math',
+  'Google Research ML',
+  'SpaceX Robotics',
+] as const
+
+type CompanyTrack = typeof COMPANY_TRACKS[number]
 
 function safeRead<T>(key: string, fallback: T): T {
   try {
@@ -228,6 +260,10 @@ function minutesAndSeconds(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
+function clampValue(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
 function randomPickProblemIds(problemIds: string[], count: number): string[] {
   const copy = [...problemIds]
   for (let i = copy.length - 1; i > 0; i -= 1) {
@@ -235,6 +271,34 @@ function randomPickProblemIds(problemIds: string[], count: number): string[] {
     ;[copy[i], copy[j]] = [copy[j], copy[i]]
   }
   return copy.slice(0, Math.min(count, copy.length))
+}
+
+function companyTracksForProblem(problem: StemProblem): CompanyTrack[] {
+  const tracks = new Set<CompanyTrack>()
+  tracks.add('All')
+
+  if (['Probability Theory', 'Statistics', 'Regression Analysis'].includes(problem.topic)) {
+    tracks.add('Jane Street Quant')
+    tracks.add('Google Research ML')
+  }
+
+  if (['Linear Algebra', 'Signal Processing'].includes(problem.topic)) {
+    tracks.add('NVIDIA Applied Math')
+    tracks.add('Google Research ML')
+  }
+
+  if (['Robotics', 'Physics', 'Electrical Engineering'].includes(problem.topic)) {
+    tracks.add('SpaceX Robotics')
+  }
+
+  const hasFormalSignal = problem.tags.some(
+    (tag) => tag.toLowerCase().includes('proof') || tag.toLowerCase().includes('lean')
+  )
+  if (hasFormalSignal || ['Group Theory', 'Linear Algebra'].includes(problem.topic)) {
+    tracks.add('DeepMind Formal')
+  }
+
+  return Array.from(tracks)
 }
 
 export default function App() {
@@ -303,9 +367,23 @@ export default function App() {
     if (typeof window === 'undefined') return 'All'
     return safeRead<'All' | string>(MOCK_TOPIC_STORAGE_KEY, 'All')
   })
+  const [mockCompanyTrack, setMockCompanyTrack] = useState<CompanyTrack>(() => {
+    if (typeof window === 'undefined') return 'All'
+    return safeRead<CompanyTrack>(MOCK_COMPANY_TRACK_STORAGE_KEY, 'All')
+  })
   const [mockDurationMinutes, setMockDurationMinutes] = useState<number>(() => {
     if (typeof window === 'undefined') return 120
     return safeRead<number>(MOCK_DURATION_STORAGE_KEY, 120)
+  })
+  const [ratingProfile, setRatingProfile] = useState<RatingProfile>(() => {
+    if (typeof window === 'undefined') {
+      return { rating: 1500, sessions: 0, history: [] }
+    }
+    return safeRead<RatingProfile>(RATING_PROFILE_STORAGE_KEY, {
+      rating: 1500,
+      sessions: 0,
+      history: [],
+    })
   })
 
   const [discussionThreads, setDiscussionThreads] = useState<DiscussionThread[]>(() => {
@@ -394,6 +472,10 @@ export default function App() {
     topicFilter,
   ])
 
+  const companyTagsByProblemId = useMemo(() => {
+    return new Map(STEM_PROBLEMS.map((problem) => [problem.id, companyTracksForProblem(problem)] as const))
+  }, [])
+
   const selectedProblem =
     STEM_PROBLEMS.find((problem) => problem.id === selectedProblemId) ??
     filteredProblems[0] ??
@@ -406,6 +488,7 @@ export default function App() {
     complexityArgued: false,
     finalReviewDone: false,
   }
+  const selectedCompanyTracks = (companyTagsByProblemId.get(selectedProblem.id) ?? ['All']).filter((track) => track !== 'All')
   const revealedHints = hintReveals[selectedProblem.id] ?? 0
   const isBookmarked = bookmarks.includes(selectedProblem.id)
 
@@ -635,6 +718,94 @@ export default function App() {
     })
   }, [acceptedProblemIds, problemById])
 
+  const latestRatingEvent = ratingProfile.history[0] ?? null
+  const latestContestEvent = ratingProfile.history.find((event) => event.mode === 'contest') ?? null
+  const latestMockEvent = ratingProfile.history.find((event) => event.mode === 'mock') ?? null
+
+  function applyRatingSession(
+    mode: 'contest' | 'mock',
+    startedAt: string,
+    problems: StemProblem[],
+    submissionsInSession: SubmissionRecord[]
+  ): RatingEvent | null {
+    if (problems.length === 0) return null
+
+    const sessionProblemIds = new Set(problems.map((problem) => problem.id))
+    const acceptedSubmissions = submissionsInSession.filter(
+      (submission) => submission.status === 'Accepted' && sessionProblemIds.has(submission.problemId)
+    )
+    const solved = new Set(acceptedSubmissions.map((submission) => submission.problemId)).size
+    const total = problems.length
+    const acceptedRate = submissionsInSession.length === 0 ? 0 : acceptedSubmissions.length / submissionsInSession.length
+    const proofAccepted = acceptedSubmissions.filter((submission) => submission.language === 'lean4').length
+    const proofRate = acceptedSubmissions.length === 0 ? 0 : proofAccepted / acceptedSubmissions.length
+
+    let performance = clampValue((solved / total) * 0.72 + acceptedRate * 0.18 + proofRate * 0.1, 0, 1)
+    if (submissionsInSession.length === 0) performance = 0
+
+    const expected = 1 / (1 + 10 ** ((1600 - ratingProfile.rating) / 400))
+    const kFactor = mode === 'contest' ? 36 : 28
+    let delta = Math.round(kFactor * (performance - expected))
+    if (submissionsInSession.length === 0) delta = Math.min(delta, -6)
+    delta = clampValue(delta, -64, 64)
+    const ratingAfter = Math.max(800, ratingProfile.rating + delta)
+
+    const event: RatingEvent = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      mode,
+      startedAt,
+      endedAt: new Date().toISOString(),
+      solved,
+      total,
+      acceptedRate: Number(acceptedRate.toFixed(3)),
+      proofRate: Number(proofRate.toFixed(3)),
+      delta,
+      ratingAfter,
+    }
+
+    const nextProfile: RatingProfile = {
+      rating: ratingAfter,
+      sessions: ratingProfile.sessions + 1,
+      history: [event, ...ratingProfile.history].slice(0, 60),
+    }
+    setRatingProfile(nextProfile)
+    safeWrite(RATING_PROFILE_STORAGE_KEY, nextProfile)
+
+    return event
+  }
+
+  function finalizeContestSession(trigger: 'manual' | 'timeout'): void {
+    if (!contestStartAt) return
+    const event = applyRatingSession('contest', contestStartAt, contestProblems, contestSubmissionScope)
+    setContestStartAt(null)
+    safeWrite(CONTEST_START_STORAGE_KEY, null)
+
+    if (!event) {
+      setCommunityMessage('Contest session ended.')
+      return
+    }
+
+    setCommunityMessage(
+      `Contest ended (${trigger}). Rating ${event.delta >= 0 ? '+' : ''}${event.delta} -> ${event.ratingAfter}.`
+    )
+  }
+
+  function finalizeMockSession(trigger: 'manual' | 'timeout'): void {
+    if (!mockStartAt) return
+    const event = applyRatingSession('mock', mockStartAt, mockProblems, mockSubmissionScope)
+    setMockStartAt(null)
+    safeWrite(MOCK_START_STORAGE_KEY, null)
+
+    if (!event) {
+      setCommunityMessage('Mock exam ended.')
+      return
+    }
+
+    setCommunityMessage(
+      `Mock exam ended (${trigger}). Rating ${event.delta >= 0 ? '+' : ''}${event.delta} -> ${event.ratingAfter}.`
+    )
+  }
+
   useEffect(() => {
     let mounted = true
 
@@ -696,16 +867,12 @@ export default function App() {
 
   useEffect(() => {
     if (!contestStartAt || contestRemainingMs > 0) return
-    setContestStartAt(null)
-    safeWrite(CONTEST_START_STORAGE_KEY, null)
-    setCommunityMessage('Contest timer finished. Session has ended.')
+    finalizeContestSession('timeout')
   }, [contestRemainingMs, contestStartAt])
 
   useEffect(() => {
     if (!mockStartAt || mockRemainingMs > 0) return
-    setMockStartAt(null)
-    safeWrite(MOCK_START_STORAGE_KEY, null)
-    setCommunityMessage('Mock exam finished. Review your submissions and proof notes.')
+    finalizeMockSession('timeout')
   }, [mockRemainingMs, mockStartAt])
 
   const refreshLeaderboard = async () => {
@@ -794,14 +961,23 @@ export default function App() {
   }
 
   const endContest = () => {
-    setContestStartAt(null)
-    safeWrite(CONTEST_START_STORAGE_KEY, null)
-    setCommunityMessage('Contest session ended.')
+    finalizeContestSession('manual')
   }
 
   const startMockExam = () => {
-    const pool = hardProblems.filter((problem) => mockTopic === 'All' || problem.topic === mockTopic)
-    const fallbackPool = pool.length > 0 ? pool : hardProblems
+    const companyFiltered = hardProblems.filter((problem) => {
+      if (mockCompanyTrack === 'All') return true
+      const companyTags = companyTagsByProblemId.get(problem.id) ?? ['All']
+      return companyTags.includes(mockCompanyTrack)
+    })
+
+    const topicAndCompanyPool = companyFiltered.filter((problem) => mockTopic === 'All' || problem.topic === mockTopic)
+    const fallbackPool =
+      topicAndCompanyPool.length > 0
+        ? topicAndCompanyPool
+        : companyFiltered.length > 0
+          ? companyFiltered
+          : hardProblems
     const pickedIds = randomPickProblemIds(fallbackPool.map((problem) => problem.id), 6)
 
     if (pickedIds.length === 0) {
@@ -815,14 +991,13 @@ export default function App() {
     setMockStartAt(started)
     safeWrite(MOCK_START_STORAGE_KEY, started)
     safeWrite(MOCK_TOPIC_STORAGE_KEY, mockTopic)
+    safeWrite(MOCK_COMPANY_TRACK_STORAGE_KEY, mockCompanyTrack)
     safeWrite(MOCK_DURATION_STORAGE_KEY, mockDurationMinutes)
-    setCommunityMessage('Mock exam started. Timer is running.')
+    setCommunityMessage(`Mock exam started (${mockCompanyTrack}). Timer is running.`)
   }
 
   const endMockExam = () => {
-    setMockStartAt(null)
-    safeWrite(MOCK_START_STORAGE_KEY, null)
-    setCommunityMessage('Mock exam ended.')
+    finalizeMockSession('manual')
   }
 
   const appendLeanProofSkeleton = () => {
@@ -1207,6 +1382,12 @@ export default function App() {
           <div className="top-stats">
             Solved {solvedCount}/{STEM_PROBLEMS.length}
             <span className="top-inline-stat">Streak {dailyStreak}</span>
+            <span className="top-inline-stat">Rating {ratingProfile.rating}</span>
+            {latestRatingEvent ? (
+              <span className="top-inline-stat">
+                Last {latestRatingEvent.mode} {latestRatingEvent.delta >= 0 ? '+' : ''}{latestRatingEvent.delta}
+              </span>
+            ) : null}
             <span className="mode-pill">{communityService.mode.toUpperCase()}</span>
           </div>
 
@@ -1361,6 +1542,11 @@ export default function App() {
                   </span>
                   <span className="meta-pill">{selectedProblem.topic}</span>
                   <span className="meta-pill">Acceptance {selectedProblem.acceptance.toFixed(1)}%</span>
+                  {selectedCompanyTracks.slice(0, 2).map((track) => (
+                    <span key={`${selectedProblem.id}-company-${track}`} className="meta-pill company-pill">
+                      {track}
+                    </span>
+                  ))}
                   <button
                     type="button"
                     className="meta-action"
@@ -1840,6 +2026,12 @@ export default function App() {
               <span className={`status-chip ${contestStartAt ? 'status-warn' : 'status-neutral'}`}>
                 {contestStartAt ? 'Contest Running' : 'Contest Idle'}
               </span>
+              <span className="meta-pill">Rating: {ratingProfile.rating}</span>
+              {latestContestEvent ? (
+                <span className="meta-pill">
+                  Last Δ {latestContestEvent.delta >= 0 ? '+' : ''}{latestContestEvent.delta}
+                </span>
+              ) : null}
               <span className="meta-pill">Time Left: {minutesAndSeconds(contestRemainingMs)}</span>
               <span className="meta-pill">Solved: {contestSolvedCount}/{contestProblems.length}</span>
             </div>
@@ -1957,6 +2149,21 @@ export default function App() {
                 </select>
               </label>
               <label>
+                Company Track
+                <select
+                  value={mockCompanyTrack}
+                  onChange={(event) => {
+                    const next = event.target.value as CompanyTrack
+                    setMockCompanyTrack(next)
+                    safeWrite(MOCK_COMPANY_TRACK_STORAGE_KEY, next)
+                  }}
+                >
+                  {COMPANY_TRACKS.map((track) => (
+                    <option key={`mock-track-${track}`} value={track}>{track}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 Duration (minutes)
                 <input
                   type="number"
@@ -1978,6 +2185,13 @@ export default function App() {
               <span className={`status-chip ${mockStartAt ? 'status-warn' : 'status-neutral'}`}>
                 {mockStartAt ? 'Mock Running' : 'Mock Idle'}
               </span>
+              <span className="meta-pill">Rating: {ratingProfile.rating}</span>
+              {latestMockEvent ? (
+                <span className="meta-pill">
+                  Last Δ {latestMockEvent.delta >= 0 ? '+' : ''}{latestMockEvent.delta}
+                </span>
+              ) : null}
+              <span className="meta-pill">Track: {mockCompanyTrack}</span>
               <span className="meta-pill">Time Left: {minutesAndSeconds(mockRemainingMs)}</span>
               <span className="meta-pill">Solved: {mockSolvedCount}/{mockProblems.length || 6}</span>
             </div>
@@ -1989,6 +2203,7 @@ export default function App() {
                     <th>ID</th>
                     <th>Problem</th>
                     <th>Topic</th>
+                    <th>Track Fit</th>
                     <th>Status</th>
                     <th>Action</th>
                   </tr>
@@ -1996,11 +2211,13 @@ export default function App() {
                 <tbody>
                   {mockProblems.map((problem) => {
                     const status = problemStatusMap.get(problem.id) ?? 'Unsolved'
+                    const companyTags = (companyTagsByProblemId.get(problem.id) ?? ['All']).filter((tag) => tag !== 'All')
                     return (
                       <tr key={`mock-${problem.id}`}>
                         <td>{problem.id}</td>
                         <td>{problem.title}</td>
                         <td>{problem.topic}</td>
+                        <td>{companyTags.slice(0, 2).join(', ') || 'General'}</td>
                         <td>{status}</td>
                         <td>
                           <button
@@ -2057,8 +2274,9 @@ export default function App() {
             <h2>Mock Exam Rules</h2>
             <ul className="statement-list">
               <li>Mock sets sample only hard problems to simulate advanced course exams.</li>
-              <li>You can filter by topic or run cross-topic integrated exams.</li>
+              <li>You can filter by topic and company-style tracks (quant, formal, applied math, robotics).</li>
               <li>Use Proof Mode inside each problem for Lean-based formalization workflow.</li>
+              <li>Each completed session updates local rating for long-term progression tracking.</li>
             </ul>
           </section>
         </main>
@@ -2391,9 +2609,10 @@ export default function App() {
           <section className="card score-rubric">
             <h2>Scoring Model</h2>
             <ul className="statement-list">
-              <li>Submission score weights: correctness, runtime efficiency, difficulty multiplier, language multiplier.</li>
+              <li>Submission score weights: correctness, runtime efficiency, difficulty multiplier, language multiplier, proof-quality multipliers.</li>
               <li>Contributor score weights: accepted-solution points, review quality, and consensus alignment.</li>
               <li>Leaderboard composite: reputation + contribution + review impact + solved count.</li>
+              <li>Proof-complete Lean submissions receive stronger positive weighting than proof-incomplete attempts.</li>
               <li>Peer reviews are bounded and normalized so spam cannot dominate ranking.</li>
             </ul>
           </section>

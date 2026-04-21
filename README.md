@@ -29,7 +29,8 @@ LeetCode-style STEM coding practice platform with in-browser judging, subject-dr
   - proof mode tab with Lean readiness checks, checklist, and proof-notes workflow
   - daily challenge with streak tracking
   - weekly timed contest mode with countdown and scoped contest submissions
-  - timed hard-problem mock exams (topic filtered)
+  - timed hard-problem mock exams (topic + company-track filtered)
+  - local contest/mock rating updates with session history
   - progress dashboard by difficulty/topic plus recent activity
   - curated study-plan tracks (Group Theory, Linear Algebra, Probability/Statistics, Regression)
 
@@ -58,3 +59,34 @@ If env vars are missing, the app runs in local fallback mode with browser storag
 Deployment is handled by `.github/workflows/pages.yml` on every push to `main`.
 
 Quality checks run in `.github/workflows/ci.yml` (`type-check` + `build`) for pushes and pull requests.
+
+<!-- REPO_ANALYSIS_OVERVIEW_START -->
+## Repository Analysis Snapshot
+
+Generated: 2026-04-21
+
+- Primary stack: Node.js, React, Vite, TypeScript
+- Key paths: `src`, `.github/workflows`, `README.md`, `package.json`
+- Files scanned (capped): 30
+- Test signal: No obvious automated test structure detected
+- CI workflows present: Yes
+
+### Quick Commands
+
+Setup:
+- `npm ci`
+
+Run:
+- `npm run dev`
+
+Quality:
+- `npm run build`
+
+### Companion Docs
+
+- `AGENTS.md`
+- `TASKS.md`
+- `PLANNING.md`
+- `RESEARCH.md`
+- `PROJECT_BRIEF.md`
+<!-- REPO_ANALYSIS_OVERVIEW_END -->

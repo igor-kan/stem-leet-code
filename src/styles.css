@@ -320,6 +320,11 @@ textarea {
   color: #42536d;
 }
 
+.company-pill {
+  background: #e9f2ff;
+  color: #2f5c9e;
+}
+
 .meta-action {
   border: 1px solid #d7dde8;
   background: #ffffff;
@@ -737,7 +742,7 @@ textarea {
 
 .mock-controls {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.55rem;
   margin: 0.55rem 0 0.45rem;
 }

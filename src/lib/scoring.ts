@@ -47,11 +47,31 @@ export function computeSubmissionScore(problem: StemProblem, result: JudgeResult
   const correctnessPoints = passRatio * 72
   const runtimePoints = Math.max(0, 18 - result.runtimeMs / 35)
   const challengePoints = Math.max(0, (100 - problem.acceptance) * 0.14)
-  const acceptedBonus = result.status === 'Accepted' ? 12 : 2 * passRatio
-  const base = correctnessPoints + runtimePoints + challengePoints + acceptedBonus
+  const proofTagged = problem.tags.some((tag) => {
+    const normalized = tag.toLowerCase()
+    return normalized.includes('proof') || normalized.includes('lean')
+  })
+  const proofCompleteLean = language === 'lean4' && result.status === 'Accepted'
+
+  let acceptedBonus = result.status === 'Accepted' ? 12 : 2 * passRatio
+  if (result.status === 'Proof Incomplete') {
+    acceptedBonus = 0.8 * passRatio
+  }
+
+  const proofBonus = (proofCompleteLean ? 18 : 0) + (proofTagged && result.status === 'Accepted' ? 8 : 0)
+  const proofMultiplier =
+    result.status === 'Proof Incomplete'
+      ? 0.55
+      : proofCompleteLean
+        ? 1.12
+        : proofTagged
+          ? 1.03
+          : 1
+
+  const base = correctnessPoints + runtimePoints + challengePoints + acceptedBonus + proofBonus
 
   const weighted =
-    base * difficultyMultiplier[problem.difficulty] * languageMultiplier[language]
+    base * difficultyMultiplier[problem.difficulty] * languageMultiplier[language] * proofMultiplier
 
   return Math.max(0, Math.round(weighted))
 }
