@@ -88,13 +88,13 @@ const STUDY_PLANS: StudyPlan[] = [
     id: 'plan-group-core',
     title: 'Group Theory Core',
     summary: 'From additive groups to cyclic generators, inverses, and subgroup criteria.',
-    problemIds: ['STEM-701', 'STEM-702', 'STEM-704', 'STEM-705', 'STEM-751', 'STEM-752', 'STEM-755', 'STEM-756'],
+    problemIds: ['STEM-701', 'STEM-702', 'STEM-704', 'STEM-705', 'STEM-751', 'STEM-752', 'STEM-755', 'STEM-756', 'STEM-757', 'STEM-758'],
   },
   {
     id: 'plan-linear-core',
     title: 'Linear Algebra Core',
     summary: 'Determinants, systems, matrix products, orthogonality, and eigen basics.',
-    problemIds: ['STEM-711', 'STEM-712', 'STEM-713', 'STEM-714', 'STEM-715', 'STEM-761', 'STEM-762', 'STEM-765', 'STEM-766'],
+    problemIds: ['STEM-711', 'STEM-712', 'STEM-713', 'STEM-714', 'STEM-715', 'STEM-761', 'STEM-762', 'STEM-765', 'STEM-766', 'STEM-767', 'STEM-768'],
   },
   {
     id: 'plan-prob-stats',
@@ -113,15 +113,19 @@ const STUDY_PLANS: StudyPlan[] = [
       'STEM-735',
       'STEM-775',
       'STEM-776',
+      'STEM-777',
+      'STEM-778',
       'STEM-785',
       'STEM-786',
+      'STEM-787',
+      'STEM-788',
     ],
   },
   {
     id: 'plan-regression-track',
     title: 'Regression Analysis Track',
     summary: 'Loss metrics, line fitting, slope/intercept, R^2, and model error diagnostics.',
-    problemIds: ['STEM-771', 'STEM-772', 'STEM-773', 'STEM-774', 'STEM-791', 'STEM-792', 'STEM-793', 'STEM-794', 'STEM-795', 'STEM-796'],
+    problemIds: ['STEM-771', 'STEM-772', 'STEM-773', 'STEM-774', 'STEM-791', 'STEM-792', 'STEM-793', 'STEM-794', 'STEM-795', 'STEM-796', 'STEM-797', 'STEM-798'],
   },
 ]
 
