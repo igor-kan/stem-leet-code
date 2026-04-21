@@ -29,9 +29,10 @@ LeetCode-style STEM coding practice platform with in-browser judging, subject-dr
   - proof mode tab with Lean readiness checks, checklist, and proof-notes workflow
   - daily challenge with streak tracking
   - weekly timed contest mode with countdown and scoped contest submissions
-  - timed hard-problem mock exams (topic + company-track filtered)
-  - local contest/mock rating updates with session history
-  - progress dashboard by difficulty/topic plus recent activity
+  - timed hard-problem mock exams with deterministic company preset templates
+  - local contest/mock rating updates with tier badges, per-topic ratings, and session history
+  - leaderboard proof score + skill rating columns (in addition to composite rank)
+  - progress dashboard by difficulty/topic, topic-rating table, and recent activity
   - curated study-plan tracks (Group Theory, Linear Algebra, Probability/Statistics, Regression)
 
 ## Run Locally
@@ -70,6 +71,8 @@ Generated: 2026-04-21
 - Files scanned (capped): 30
 - Test signal: No obvious automated test structure detected
 - CI workflows present: Yes
+- GitHub slug: igor-kan/stem-leet-code
+- GitHub last push: 2026-04-21T21:03:58Z
 
 ### Quick Commands
 
@@ -89,4 +92,13 @@ Quality:
 - `PLANNING.md`
 - `RESEARCH.md`
 - `PROJECT_BRIEF.md`
+
+### Web Research References
+
+- Origin remote: `https://github.com/igor-kan/stem-leet-code.git`
+- GitHub homepage: Not set
+- `Node.js: https://nodejs.org/en/docs`
+- `React: https://react.dev`
+- `Vite: https://vite.dev/guide/`
+- `TypeScript: https://www.typescriptlang.org/docs/`
 <!-- REPO_ANALYSIS_OVERVIEW_END -->

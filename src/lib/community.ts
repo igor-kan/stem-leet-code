@@ -73,6 +73,8 @@ export interface ReviewQueueItem {
 export interface LeaderboardEntry extends CommunityUser {
   rank: number
   compositeScore: number
+  proofScore: number
+  rating: number
 }
 
 export interface AuthResult {
@@ -190,6 +192,36 @@ function sortLeaderboardEntries(entries: LeaderboardEntry[]): LeaderboardEntry[]
   }))
 }
 
+function computeProofScoreFromSubmissions(
+  submissions: Array<Pick<CommunitySubmission, 'status' | 'language'>>
+): number {
+  let acceptedLean = 0
+  let proofIncompleteLean = 0
+
+  for (const submission of submissions) {
+    if (submission.language !== 'lean4') continue
+    if (submission.status === 'Accepted') acceptedLean += 1
+    if (submission.status === 'Proof Incomplete') proofIncompleteLean += 1
+  }
+
+  return Math.max(0, acceptedLean * 24 - proofIncompleteLean * 9)
+}
+
+function computeLeaderboardRating(input: {
+  solvedCount: number
+  contributionScore: number
+  reviewScore: number
+  proofScore: number
+}): number {
+  const raw =
+    1000 +
+    input.solvedCount * 14 +
+    input.contributionScore * 0.2 +
+    input.reviewScore * 0.12 +
+    input.proofScore * 0.45
+  return Math.max(800, Math.min(3900, Math.round(raw)))
+}
+
 function recomputeLocalUsers(
   users: LocalUserRecord[],
   submissions: LocalSubmissionRecord[],
@@ -273,15 +305,34 @@ function emitLocalAuthChange(user: CommunityUser | null): void {
 }
 
 function buildLocalLeaderboard(limit: number): LeaderboardEntry[] {
-  const users = recomputeLocalUsers(getLocalUsers(), getLocalSubmissions(), getLocalReviews())
+  const submissions = getLocalSubmissions()
+  const reviews = getLocalReviews()
+  const users = recomputeLocalUsers(getLocalUsers(), submissions, reviews)
   saveLocalUsers(users)
+
+  const submissionsByUser = new Map<string, LocalSubmissionRecord[]>()
+  for (const submission of submissions) {
+    const list = submissionsByUser.get(submission.userId) ?? []
+    list.push(submission)
+    submissionsByUser.set(submission.userId, list)
+  }
 
   const entries = users.map((user) => {
     const publicUser = toPublicUser(user)
+    const proofScore = computeProofScoreFromSubmissions(submissionsByUser.get(user.id) ?? [])
+    const rating = computeLeaderboardRating({
+      solvedCount: publicUser.solvedCount,
+      contributionScore: publicUser.contributionScore,
+      reviewScore: publicUser.reviewScore,
+      proofScore,
+    })
+
     return {
       ...publicUser,
       rank: 0,
-      compositeScore: computeCompositeLeaderboardScore(publicUser),
+      proofScore,
+      rating,
+      compositeScore: computeCompositeLeaderboardScore(publicUser) + Math.round(proofScore * 0.2),
     }
   })
 
@@ -683,10 +734,57 @@ function createSupabaseService(client: SupabaseClient): CommunityService {
           ...mapped,
           rank: 0,
           compositeScore: computeCompositeLeaderboardScore(mapped),
+          proofScore: 0,
+          rating: 0,
         }
       })
 
-      return sortLeaderboardEntries(rawEntries).slice(0, limit)
+      const userIds = rawEntries.map((entry) => entry.id)
+      const proofScoreByUser = new Map<string, number>()
+
+      if (userIds.length > 0) {
+        const { data: submissionRows } = await client
+          .from('community_submissions')
+          .select('user_id,status,language')
+          .in('user_id', userIds)
+          .limit(limit * 250)
+
+        const submissionBuckets = new Map<string, Array<Pick<CommunitySubmission, 'status' | 'language'>>>()
+        for (const row of submissionRows ?? []) {
+          const parsed = row as Record<string, unknown>
+          const userId = String(parsed.user_id ?? '')
+          if (!userId) continue
+          const list = submissionBuckets.get(userId) ?? []
+          list.push({
+            status: String(parsed.status ?? 'Wrong Answer') as JudgeResult['status'],
+            language: String(parsed.language ?? 'javascript') as Language,
+          })
+          submissionBuckets.set(userId, list)
+        }
+
+        for (const [userId, bucket] of submissionBuckets.entries()) {
+          proofScoreByUser.set(userId, computeProofScoreFromSubmissions(bucket))
+        }
+      }
+
+      const enrichedEntries = rawEntries.map((entry) => {
+        const proofScore = proofScoreByUser.get(entry.id) ?? 0
+        const rating = computeLeaderboardRating({
+          solvedCount: entry.solvedCount,
+          contributionScore: entry.contributionScore,
+          reviewScore: entry.reviewScore,
+          proofScore,
+        })
+
+        return {
+          ...entry,
+          proofScore,
+          rating,
+          compositeScore: entry.compositeScore + Math.round(proofScore * 0.2),
+        }
+      })
+
+      return sortLeaderboardEntries(enrichedEntries).slice(0, limit)
     },
 
     async saveSubmission(user, input) {

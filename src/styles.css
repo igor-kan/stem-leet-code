@@ -325,6 +325,58 @@ textarea {
   color: #2f5c9e;
 }
 
+.rating-tier-pill {
+  border: 1px solid transparent;
+}
+
+.rating-tier-pill.tier-novice {
+  background: #eef2f7;
+  color: #4a5a72;
+  border-color: #d9e0eb;
+}
+
+.rating-tier-pill.tier-apprentice {
+  background: #edf6ff;
+  color: #2d5f96;
+  border-color: #c9dff7;
+}
+
+.rating-tier-pill.tier-scholar {
+  background: #edf8f4;
+  color: #2e6a4c;
+  border-color: #c9e6d8;
+}
+
+.rating-tier-pill.tier-specialist {
+  background: #fff6e7;
+  color: #9b6100;
+  border-color: #f5ddad;
+}
+
+.rating-tier-pill.tier-expert {
+  background: #ffece7;
+  color: #a24a31;
+  border-color: #f5cec2;
+}
+
+.rating-tier-pill.tier-master {
+  background: #f2ecff;
+  color: #5b43a5;
+  border-color: #ddd1fa;
+}
+
+.rating-tier-pill.tier-grandmaster {
+  background: #fff0e3;
+  color: #8e4f00;
+  border-color: #ffd3a6;
+}
+
+.top-inline-stat.rating-tier-pill {
+  border-radius: 999px;
+  padding: 0.05rem 0.46rem;
+  margin-left: 0.5rem;
+}
+
 .meta-action {
   border: 1px solid #d7dde8;
   background: #ffffff;
@@ -760,6 +812,14 @@ textarea {
   border-radius: 8px;
   padding: 0.4rem 0.55rem;
   background: #ffffff;
+}
+
+.template-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.1rem 0 0.25rem;
 }
 
 .discuss-filter {

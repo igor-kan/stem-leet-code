@@ -66,6 +66,20 @@ interface ProofChecklist {
   finalReviewDone: boolean
 }
 
+interface TopicRating {
+  rating: number
+  sessions: number
+  updatedAt: string
+}
+
+interface TopicRatingDelta {
+  topic: string
+  solved: number
+  total: number
+  delta: number
+  ratingAfter: number
+}
+
 interface RatingEvent {
   id: string
   mode: 'contest' | 'mock'
@@ -77,12 +91,14 @@ interface RatingEvent {
   proofRate: number
   delta: number
   ratingAfter: number
+  topicDeltas: TopicRatingDelta[]
 }
 
 interface RatingProfile {
   rating: number
   sessions: number
   history: RatingEvent[]
+  topicRatings: Record<string, TopicRating>
 }
 
 const SOURCE_STORAGE_KEY = 'stem-leet-code:sources:v1'
@@ -101,6 +117,7 @@ const MOCK_COMPANY_TRACK_STORAGE_KEY = 'stem-leet-code:mock-company-track:v1'
 const RATING_PROFILE_STORAGE_KEY = 'stem-leet-code:rating-profile:v1'
 const DISCUSSION_STORAGE_KEY = 'stem-leet-code:discussion:v1'
 const DISCUSSION_VOTER_KEY = 'stem-leet-code:discussion-voter:v1'
+const BASE_RATING = 1500
 
 const languageLabels: Record<Language, string> = {
   javascript: 'JavaScript',
@@ -175,6 +192,50 @@ const COMPANY_TRACKS = [
 
 type CompanyTrack = typeof COMPANY_TRACKS[number]
 
+interface CompanyMockTemplate {
+  title: string
+  summary: string
+  problemIds: string[]
+}
+
+const COMPANY_MOCK_TEMPLATES: Record<CompanyTrack, CompanyMockTemplate> = {
+  All: {
+    title: 'Interdisciplinary Finals Set',
+    summary: 'Balanced hard set across algebra, probability, statistics, and regression.',
+    problemIds: ['STEM-758', 'STEM-767', 'STEM-776', 'STEM-788', 'STEM-797', 'STEM-806'],
+  },
+  'Jane Street Quant': {
+    title: 'Quant Interview Circuit',
+    summary: 'Probability tails, inference rigor, and high-pressure numeric precision.',
+    problemIds: ['STEM-752', 'STEM-776', 'STEM-787', 'STEM-788', 'STEM-803', 'STEM-806'],
+  },
+  'DeepMind Formal': {
+    title: 'Formal Reasoning Sprint',
+    summary: 'Group and linear algebra problems aligned with theorem-driven workflows.',
+    problemIds: ['STEM-755', 'STEM-758', 'STEM-799', 'STEM-800', 'STEM-767', 'STEM-802'],
+  },
+  'NVIDIA Applied Math': {
+    title: 'Applied Math Systems Set',
+    summary: 'Linear algebra stability, matrix mechanics, and optimization diagnostics.',
+    problemIds: ['STEM-767', 'STEM-801', 'STEM-802', 'STEM-803', 'STEM-807', 'STEM-808'],
+  },
+  'Google Research ML': {
+    title: 'ML Foundations Drill',
+    summary: 'Statistics + probabilistic modeling with regression objective stress tests.',
+    problemIds: ['STEM-776', 'STEM-803', 'STEM-804', 'STEM-806', 'STEM-807', 'STEM-808'],
+  },
+  'SpaceX Robotics': {
+    title: 'Robotics Control Gauntlet',
+    summary: 'Control math under constraints: robotics pathing, dynamics, and state uncertainty.',
+    problemIds: ['STEM-623', 'STEM-767', 'STEM-801', 'STEM-802', 'STEM-805', 'STEM-806'],
+  },
+}
+
+interface RatingTier {
+  label: string
+  className: string
+}
+
 function safeRead<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key)
@@ -191,6 +252,39 @@ function safeWrite(key: string, value: unknown): void {
     localStorage.setItem(key, JSON.stringify(value))
   } catch {
     // Ignore quota/serialization issues for local persistence.
+  }
+}
+
+function ratingTierFor(rating: number): RatingTier {
+  if (rating >= 2300) return { label: 'Grandmaster', className: 'tier-grandmaster' }
+  if (rating >= 2000) return { label: 'Master', className: 'tier-master' }
+  if (rating >= 1800) return { label: 'Expert', className: 'tier-expert' }
+  if (rating >= 1600) return { label: 'Specialist', className: 'tier-specialist' }
+  if (rating >= 1400) return { label: 'Scholar', className: 'tier-scholar' }
+  if (rating >= 1200) return { label: 'Apprentice', className: 'tier-apprentice' }
+  return { label: 'Novice', className: 'tier-novice' }
+}
+
+const DEFAULT_RATING_PROFILE: RatingProfile = {
+  rating: BASE_RATING,
+  sessions: 0,
+  history: [],
+  topicRatings: {},
+}
+
+function normalizeRatingProfile(profile: RatingProfile | null): RatingProfile {
+  if (!profile) return DEFAULT_RATING_PROFILE
+
+  return {
+    rating: Number.isFinite(profile.rating) ? Math.round(profile.rating) : BASE_RATING,
+    sessions: Number.isFinite(profile.sessions) ? Math.max(0, Math.round(profile.sessions)) : 0,
+    history: Array.isArray(profile.history)
+      ? profile.history.map((event) => ({
+          ...event,
+          topicDeltas: event.topicDeltas ?? [],
+        }))
+      : [],
+    topicRatings: profile.topicRatings ?? {},
   }
 }
 
@@ -262,15 +356,6 @@ function minutesAndSeconds(ms: number): string {
 
 function clampValue(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
-}
-
-function randomPickProblemIds(problemIds: string[], count: number): string[] {
-  const copy = [...problemIds]
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
-  }
-  return copy.slice(0, Math.min(count, copy.length))
 }
 
 function companyTracksForProblem(problem: StemProblem): CompanyTrack[] {
@@ -376,14 +461,8 @@ export default function App() {
     return safeRead<number>(MOCK_DURATION_STORAGE_KEY, 120)
   })
   const [ratingProfile, setRatingProfile] = useState<RatingProfile>(() => {
-    if (typeof window === 'undefined') {
-      return { rating: 1500, sessions: 0, history: [] }
-    }
-    return safeRead<RatingProfile>(RATING_PROFILE_STORAGE_KEY, {
-      rating: 1500,
-      sessions: 0,
-      history: [],
-    })
+    if (typeof window === 'undefined') return DEFAULT_RATING_PROFILE
+    return normalizeRatingProfile(safeRead<RatingProfile | null>(RATING_PROFILE_STORAGE_KEY, null))
   })
 
   const [discussionThreads, setDiscussionThreads] = useState<DiscussionThread[]>(() => {
@@ -589,6 +668,7 @@ export default function App() {
   }, [mockProblemIds])
 
   const mockDurationMs = mockDurationMinutes * 60 * 1000
+  const activeMockTemplate = COMPANY_MOCK_TEMPLATES[mockCompanyTrack]
   const mockRemainingMs = useMemo(() => {
     if (!mockStartAt) return mockDurationMs
     const elapsed = nowTs - new Date(mockStartAt).getTime()
@@ -721,6 +801,7 @@ export default function App() {
   const latestRatingEvent = ratingProfile.history[0] ?? null
   const latestContestEvent = ratingProfile.history.find((event) => event.mode === 'contest') ?? null
   const latestMockEvent = ratingProfile.history.find((event) => event.mode === 'mock') ?? null
+  const currentRatingTier = ratingTierFor(ratingProfile.rating)
 
   function applyRatingSession(
     mode: 'contest' | 'mock',
@@ -743,30 +824,76 @@ export default function App() {
     let performance = clampValue((solved / total) * 0.72 + acceptedRate * 0.18 + proofRate * 0.1, 0, 1)
     if (submissionsInSession.length === 0) performance = 0
 
-    const expected = 1 / (1 + 10 ** ((1600 - ratingProfile.rating) / 400))
+    const expected = 1 / (1 + 10 ** ((BASE_RATING - ratingProfile.rating) / 400))
     const kFactor = mode === 'contest' ? 36 : 28
     let delta = Math.round(kFactor * (performance - expected))
     if (submissionsInSession.length === 0) delta = Math.min(delta, -6)
     delta = clampValue(delta, -64, 64)
     const ratingAfter = Math.max(800, ratingProfile.rating + delta)
+    const nowIso = new Date().toISOString()
+
+    const solvedProblemIds = new Set(acceptedSubmissions.map((submission) => submission.problemId))
+    const topicTotals = new Map<string, number>()
+    const topicSolved = new Map<string, number>()
+    for (const problem of problems) {
+      topicTotals.set(problem.topic, (topicTotals.get(problem.topic) ?? 0) + 1)
+      if (solvedProblemIds.has(problem.id)) {
+        topicSolved.set(problem.topic, (topicSolved.get(problem.topic) ?? 0) + 1)
+      }
+    }
+
+    const nextTopicRatings: Record<string, TopicRating> = { ...ratingProfile.topicRatings }
+    const topicDeltas: TopicRatingDelta[] = []
+
+    for (const [topic, topicTotal] of topicTotals.entries()) {
+      const solvedForTopic = topicSolved.get(topic) ?? 0
+      const currentTopicRating = nextTopicRatings[topic] ?? {
+        rating: BASE_RATING,
+        sessions: 0,
+        updatedAt: nowIso,
+      }
+      const topicPerformance = topicTotal === 0 ? 0 : solvedForTopic / topicTotal
+      const expectedTopic = 1 / (1 + 10 ** ((BASE_RATING - currentTopicRating.rating) / 400))
+      let topicDelta = Math.round((mode === 'contest' ? 26 : 20) * (topicPerformance - expectedTopic))
+      if (submissionsInSession.length === 0) topicDelta = Math.min(topicDelta, -4)
+      topicDelta = clampValue(topicDelta, -48, 48)
+      const topicAfter = Math.max(700, currentTopicRating.rating + topicDelta)
+
+      nextTopicRatings[topic] = {
+        rating: topicAfter,
+        sessions: currentTopicRating.sessions + 1,
+        updatedAt: nowIso,
+      }
+      topicDeltas.push({
+        topic,
+        solved: solvedForTopic,
+        total: topicTotal,
+        delta: topicDelta,
+        ratingAfter: topicAfter,
+      })
+    }
+
+    topicDeltas.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.topic.localeCompare(b.topic))
 
     const event: RatingEvent = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       mode,
       startedAt,
-      endedAt: new Date().toISOString(),
+      endedAt: nowIso,
       solved,
       total,
       acceptedRate: Number(acceptedRate.toFixed(3)),
       proofRate: Number(proofRate.toFixed(3)),
       delta,
       ratingAfter,
+      topicDeltas,
     }
 
     const nextProfile: RatingProfile = {
       rating: ratingAfter,
       sessions: ratingProfile.sessions + 1,
       history: [event, ...ratingProfile.history].slice(0, 60),
+      topicRatings: nextTopicRatings,
     }
     setRatingProfile(nextProfile)
     safeWrite(RATING_PROFILE_STORAGE_KEY, nextProfile)
@@ -785,8 +912,10 @@ export default function App() {
       return
     }
 
+    const topTopic = event.topicDeltas[0]
+    const topicMessage = topTopic ? ` Top topic ${topTopic.topic} ${topTopic.delta >= 0 ? '+' : ''}${topTopic.delta}.` : ''
     setCommunityMessage(
-      `Contest ended (${trigger}). Rating ${event.delta >= 0 ? '+' : ''}${event.delta} -> ${event.ratingAfter}.`
+      `Contest ended (${trigger}). Rating ${event.delta >= 0 ? '+' : ''}${event.delta} -> ${event.ratingAfter}.${topicMessage}`
     )
   }
 
@@ -801,8 +930,10 @@ export default function App() {
       return
     }
 
+    const topTopic = event.topicDeltas[0]
+    const topicMessage = topTopic ? ` Top topic ${topTopic.topic} ${topTopic.delta >= 0 ? '+' : ''}${topTopic.delta}.` : ''
     setCommunityMessage(
-      `Mock exam ended (${trigger}). Rating ${event.delta >= 0 ? '+' : ''}${event.delta} -> ${event.ratingAfter}.`
+      `Mock exam ended (${trigger}). Rating ${event.delta >= 0 ? '+' : ''}${event.delta} -> ${event.ratingAfter}.${topicMessage}`
     )
   }
 
@@ -972,13 +1103,32 @@ export default function App() {
     })
 
     const topicAndCompanyPool = companyFiltered.filter((problem) => mockTopic === 'All' || problem.topic === mockTopic)
-    const fallbackPool =
-      topicAndCompanyPool.length > 0
-        ? topicAndCompanyPool
-        : companyFiltered.length > 0
-          ? companyFiltered
-          : hardProblems
-    const pickedIds = randomPickProblemIds(fallbackPool.map((problem) => problem.id), 6)
+    const templateProblems = activeMockTemplate.problemIds
+      .map((problemId) => STEM_PROBLEMS.find((problem) => problem.id === problemId))
+      .filter((problem): problem is StemProblem => Boolean(problem && problem.difficulty === 'Hard'))
+      .filter((problem) => mockTopic === 'All' || problem.topic === mockTopic)
+
+    const deterministicCompanyPool = topicAndCompanyPool
+      .slice()
+      .sort((a, b) => a.id.localeCompare(b.id))
+
+    const deterministicGlobalPool = hardProblems
+      .slice()
+      .sort((a, b) => a.id.localeCompare(b.id))
+
+    const mergedPool: StemProblem[] = []
+    const seenProblemIds = new Set<string>()
+    const pushUnique = (problem: StemProblem) => {
+      if (seenProblemIds.has(problem.id)) return
+      seenProblemIds.add(problem.id)
+      mergedPool.push(problem)
+    }
+
+    for (const problem of templateProblems) pushUnique(problem)
+    for (const problem of deterministicCompanyPool) pushUnique(problem)
+    for (const problem of deterministicGlobalPool) pushUnique(problem)
+
+    const pickedIds = mergedPool.slice(0, 6).map((problem) => problem.id)
 
     if (pickedIds.length === 0) {
       setCommunityMessage('No hard problems available for this mock filter.')
@@ -993,7 +1143,7 @@ export default function App() {
     safeWrite(MOCK_TOPIC_STORAGE_KEY, mockTopic)
     safeWrite(MOCK_COMPANY_TRACK_STORAGE_KEY, mockCompanyTrack)
     safeWrite(MOCK_DURATION_STORAGE_KEY, mockDurationMinutes)
-    setCommunityMessage(`Mock exam started (${mockCompanyTrack}). Timer is running.`)
+    setCommunityMessage(`Mock exam started: ${activeMockTemplate.title} (${mockCompanyTrack}). Timer is running.`)
   }
 
   const endMockExam = () => {
@@ -1383,6 +1533,9 @@ export default function App() {
             Solved {solvedCount}/{STEM_PROBLEMS.length}
             <span className="top-inline-stat">Streak {dailyStreak}</span>
             <span className="top-inline-stat">Rating {ratingProfile.rating}</span>
+            <span className={`top-inline-stat rating-tier-pill ${currentRatingTier.className}`}>
+              Tier {currentRatingTier.label}
+            </span>
             {latestRatingEvent ? (
               <span className="top-inline-stat">
                 Last {latestRatingEvent.mode} {latestRatingEvent.delta >= 0 ? '+' : ''}{latestRatingEvent.delta}
@@ -2181,6 +2334,11 @@ export default function App() {
               </label>
             </div>
 
+            <div className="template-summary">
+              <span className="meta-pill">Template: {activeMockTemplate.title}</span>
+              <span className="muted">{activeMockTemplate.summary}</span>
+            </div>
+
             <div className="contest-summary">
               <span className={`status-chip ${mockStartAt ? 'status-warn' : 'status-neutral'}`}>
                 {mockStartAt ? 'Mock Running' : 'Mock Idle'}
@@ -2192,6 +2350,7 @@ export default function App() {
                 </span>
               ) : null}
               <span className="meta-pill">Track: {mockCompanyTrack}</span>
+              <span className="meta-pill">Preset: {activeMockTemplate.title}</span>
               <span className="meta-pill">Time Left: {minutesAndSeconds(mockRemainingMs)}</span>
               <span className="meta-pill">Solved: {mockSolvedCount}/{mockProblems.length || 6}</span>
             </div>
@@ -2275,6 +2434,7 @@ export default function App() {
             <ul className="statement-list">
               <li>Mock sets sample only hard problems to simulate advanced course exams.</li>
               <li>You can filter by topic and company-style tracks (quant, formal, applied math, robotics).</li>
+              <li>Each company track maps to a deterministic preset template before deterministic fallback pools.</li>
               <li>Use Proof Mode inside each problem for Lean-based formalization workflow.</li>
               <li>Each completed session updates local rating for long-term progression tracking.</li>
             </ul>
@@ -2316,17 +2476,31 @@ export default function App() {
                   <th>Solved</th>
                   <th>Total</th>
                   <th>Completion</th>
+                  <th>Rating</th>
+                  <th>Tier</th>
+                  <th>Rated Sessions</th>
                 </tr>
               </thead>
               <tbody>
                 {progressByTopic.map((row) => {
                   const completion = row.total === 0 ? 0 : Math.round((row.solved / row.total) * 100)
+                  const topicRating = ratingProfile.topicRatings[row.topic] ?? {
+                    rating: BASE_RATING,
+                    sessions: 0,
+                    updatedAt: '',
+                  }
+                  const topicTier = ratingTierFor(topicRating.rating)
                   return (
                     <tr key={`topic-progress-${row.topic}`}>
                       <td>{row.topic}</td>
                       <td>{row.solved}</td>
                       <td>{row.total}</td>
                       <td>{completion}%</td>
+                      <td>{topicRating.rating}</td>
+                      <td>
+                        <span className={`meta-pill rating-tier-pill ${topicTier.className}`}>{topicTier.label}</span>
+                      </td>
+                      <td>{topicRating.sessions}</td>
                     </tr>
                   )
                 })}
@@ -2335,6 +2509,41 @@ export default function App() {
           </section>
 
           <section className="card score-rubric">
+            <h2>Rating History</h2>
+            {ratingProfile.history.length === 0 ? (
+              <p className="muted">No rated contest/mock sessions yet.</p>
+            ) : (
+              <table className="submissions-table">
+                <thead>
+                  <tr>
+                    <th>Mode</th>
+                    <th>Solved</th>
+                    <th>Accepted</th>
+                    <th>Proof</th>
+                    <th>Delta</th>
+                    <th>Rating</th>
+                    <th>Top Topic Delta</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ratingProfile.history.slice(0, 10).map((event) => {
+                    const topTopic = event.topicDeltas[0]
+                    return (
+                      <tr key={`rating-event-${event.id}`}>
+                        <td>{event.mode}</td>
+                        <td>{event.solved}/{event.total}</td>
+                        <td>{Math.round(event.acceptedRate * 100)}%</td>
+                        <td>{Math.round(event.proofRate * 100)}%</td>
+                        <td>{event.delta >= 0 ? '+' : ''}{event.delta}</td>
+                        <td>{event.ratingAfter}</td>
+                        <td>{topTopic ? `${topTopic.topic} ${topTopic.delta >= 0 ? '+' : ''}${topTopic.delta}` : '-'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+
             <h2>Recent Activity</h2>
             <table className="submissions-table">
               <thead>
@@ -2580,27 +2789,38 @@ export default function App() {
                     <th>Rank</th>
                     <th>User</th>
                     <th>Solved</th>
+                    <th>Proof</th>
                     <th>Reputation</th>
                     <th>Contrib</th>
                     <th>Review</th>
+                    <th>Rating</th>
                     <th>Composite</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {leaderboard.map((entry) => (
-                    <tr
-                      key={entry.id}
-                      className={currentUser?.id === entry.id ? 'leaderboard-row-self' : ''}
-                    >
-                      <td>#{entry.rank}</td>
-                      <td>{entry.username}</td>
-                      <td>{entry.solvedCount}</td>
-                      <td>{entry.reputation}</td>
-                      <td>{entry.contributionScore}</td>
-                      <td>{entry.reviewScore}</td>
-                      <td>{entry.compositeScore}</td>
-                    </tr>
-                  ))}
+                  {leaderboard.map((entry) => {
+                    const tier = ratingTierFor(entry.rating)
+                    return (
+                      <tr
+                        key={entry.id}
+                        className={currentUser?.id === entry.id ? 'leaderboard-row-self' : ''}
+                      >
+                        <td>#{entry.rank}</td>
+                        <td>{entry.username}</td>
+                        <td>{entry.solvedCount}</td>
+                        <td>{entry.proofScore}</td>
+                        <td>{entry.reputation}</td>
+                        <td>{entry.contributionScore}</td>
+                        <td>{entry.reviewScore}</td>
+                        <td>
+                          <span className={`meta-pill rating-tier-pill ${tier.className}`}>
+                            {entry.rating} · {tier.label}
+                          </span>
+                        </td>
+                        <td>{entry.compositeScore}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             )}
@@ -2611,6 +2831,7 @@ export default function App() {
             <ul className="statement-list">
               <li>Submission score weights: correctness, runtime efficiency, difficulty multiplier, language multiplier, proof-quality multipliers.</li>
               <li>Contributor score weights: accepted-solution points, review quality, and consensus alignment.</li>
+              <li>Leaderboard rows now expose explicit proof score and skill rating in addition to composite rank.</li>
               <li>Leaderboard composite: reputation + contribution + review impact + solved count.</li>
               <li>Proof-complete Lean submissions receive stronger positive weighting than proof-incomplete attempts.</li>
               <li>Peer reviews are bounded and normalized so spam cannot dominate ranking.</li>
