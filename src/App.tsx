@@ -19,6 +19,8 @@ type TopView =
   | 'contest'
   | 'mock'
   | 'profile'
+  | 'teams'
+  | 'submission-detail'
   | 'leaderboard'
   | 'reviews'
   | 'progress'
@@ -34,6 +36,33 @@ interface AchievementCard {
   description: string
   unlocked: boolean
   progressLabel: string
+}
+
+interface TeamMember {
+  userId: string
+  username: string
+  joinedAt: string
+}
+
+interface TeamSpace {
+  id: string
+  name: string
+  ownerId: string
+  inviteCode: string
+  isPrivate: boolean
+  createdAt: string
+  members: TeamMember[]
+}
+
+interface ContestStandingRow {
+  id: string
+  username: string
+  solved: number
+  penalty: number
+  bestRuntime: number
+  lastAcceptedAtMs: number
+  predictedDelta: number
+  isCurrentUser: boolean
 }
 
 interface ReviewDraft {
@@ -127,6 +156,8 @@ const MOCK_COMPANY_TRACK_STORAGE_KEY = 'stem-leet-code:mock-company-track:v1'
 const RATING_PROFILE_STORAGE_KEY = 'stem-leet-code:rating-profile:v1'
 const DISCUSSION_STORAGE_KEY = 'stem-leet-code:discussion:v1'
 const DISCUSSION_VOTER_KEY = 'stem-leet-code:discussion-voter:v1'
+const TEAM_SPACES_STORAGE_KEY = 'stem-leet-code:teams:v1'
+const ACTIVE_TEAM_STORAGE_KEY = 'stem-leet-code:active-team:v1'
 const BASE_RATING = 1500
 
 const languageLabels: Record<Language, string> = {
@@ -368,6 +399,18 @@ function clampValue(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+function generateInviteCode(): string {
+  return Math.random().toString(36).slice(2, 8).toUpperCase()
+}
+
+function stringHash(input: string): number {
+  let hash = 0
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 31 + input.charCodeAt(index)) >>> 0
+  }
+  return hash
+}
+
 function companyTracksForProblem(problem: StemProblem): CompanyTrack[] {
   const tracks = new Set<CompanyTrack>()
   tracks.add('All')
@@ -407,6 +450,7 @@ export default function App() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [bookmarkOnly, setBookmarkOnly] = useState(false)
   const [selectedProblemId, setSelectedProblemId] = useState(STEM_PROBLEMS[0]?.id ?? '')
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | null>(null)
   const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE)
   const [activeTab, setActiveTab] = useState<PanelTab>('description')
   const [judgeResult, setJudgeResult] = useState<JudgeResult | null>(null)
@@ -494,6 +538,18 @@ export default function App() {
     safeWrite(DISCUSSION_VOTER_KEY, next)
     return next
   })
+
+  const [teamSpaces, setTeamSpaces] = useState<TeamSpace[]>(() => {
+    if (typeof window === 'undefined') return []
+    return safeRead<TeamSpace[]>(TEAM_SPACES_STORAGE_KEY, [])
+  })
+  const [activeTeamId, setActiveTeamId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return safeRead<string | null>(ACTIVE_TEAM_STORAGE_KEY, null)
+  })
+  const [createTeamName, setCreateTeamName] = useState('')
+  const [createTeamPrivate, setCreateTeamPrivate] = useState(true)
+  const [joinTeamCode, setJoinTeamCode] = useState('')
 
   const [currentUser, setCurrentUser] = useState<CommunityUser | null>(null)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
@@ -1043,6 +1099,171 @@ export default function App() {
     return achievementCards.filter((achievement) => achievement.unlocked).length
   }, [achievementCards])
 
+  const selectedSubmission = useMemo(() => {
+    if (!selectedSubmissionId) return null
+    return submissions.find((submission) => submission.id === selectedSubmissionId) ?? null
+  }, [selectedSubmissionId, submissions])
+
+  const selectedSubmissionProblem = useMemo(() => {
+    if (!selectedSubmission) return null
+    return problemById.get(selectedSubmission.problemId) ?? null
+  }, [problemById, selectedSubmission])
+
+  const myTeams = useMemo(() => {
+    if (!currentUser) return []
+    return teamSpaces.filter((team) => team.members.some((member) => member.userId === currentUser.id))
+  }, [currentUser, teamSpaces])
+
+  const activeTeam = useMemo(() => {
+    if (!activeTeamId) return null
+    const found = teamSpaces.find((team) => team.id === activeTeamId) ?? null
+    if (!found) return null
+    if (!currentUser) return null
+    if (!found.members.some((member) => member.userId === currentUser.id)) return null
+    return found
+  }, [activeTeamId, currentUser, teamSpaces])
+
+  const teamLeaderboardEntries = useMemo(() => {
+    if (!activeTeam) return []
+    const byId = new Map(leaderboard.map((entry) => [entry.id, entry]))
+    const placeholder = activeTeam.members.map((member): LeaderboardEntry => {
+      const existing = byId.get(member.userId)
+      if (existing) return existing
+
+      return {
+        id: member.userId,
+        email: '',
+        username: member.username,
+        displayName: member.username,
+        reputation: 0,
+        contributionScore: 0,
+        reviewScore: 0,
+        solvedCount: 0,
+        totalSubmissions: 0,
+        rank: 0,
+        proofScore: 0,
+        rating: BASE_RATING,
+        compositeScore: 0,
+      }
+    })
+
+    const sorted = [...placeholder].sort((a, b) => {
+      if (b.compositeScore !== a.compositeScore) return b.compositeScore - a.compositeScore
+      if (b.rating !== a.rating) return b.rating - a.rating
+      return a.username.localeCompare(b.username)
+    })
+
+    return sorted.map((entry, index) => ({
+      ...entry,
+      rank: index + 1,
+    }))
+  }, [activeTeam, leaderboard])
+
+  const contestStandings = useMemo(() => {
+    const startMs = contestStartAt ? new Date(contestStartAt).getTime() : nowTs
+    const scopedByProblem = new Map<string, SubmissionRecord[]>()
+    for (const problem of contestProblems) {
+      scopedByProblem.set(problem.id, [])
+    }
+    for (const submission of contestSubmissionScope) {
+      const list = scopedByProblem.get(submission.problemId)
+      if (!list) continue
+      list.push(submission)
+    }
+    for (const [problemId, list] of scopedByProblem.entries()) {
+      list.sort((a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime())
+      scopedByProblem.set(problemId, list)
+    }
+
+    let solved = 0
+    let penalty = 0
+    let bestRuntime = Number.POSITIVE_INFINITY
+    let lastAcceptedAtMs = -1
+
+    for (const problem of contestProblems) {
+      const attempts = scopedByProblem.get(problem.id) ?? []
+      let wrongAttempts = 0
+      let acceptedSubmission: SubmissionRecord | null = null
+
+      for (const attempt of attempts) {
+        if (attempt.status === 'Accepted') {
+          acceptedSubmission = attempt
+          break
+        }
+        wrongAttempts += 1
+      }
+
+      if (!acceptedSubmission) continue
+
+      solved += 1
+      const acceptedAt = new Date(acceptedSubmission.submittedAt).getTime()
+      const elapsedMinutes = Math.max(0, Math.floor((acceptedAt - startMs) / 60_000))
+      penalty += elapsedMinutes + wrongAttempts * 20
+      bestRuntime = Math.min(bestRuntime, acceptedSubmission.runtimeMs)
+      lastAcceptedAtMs = Math.max(lastAcceptedAtMs, Math.max(0, acceptedAt - startMs))
+    }
+
+    if (!Number.isFinite(bestRuntime)) bestRuntime = 9999
+    if (lastAcceptedAtMs < 0) lastAcceptedAtMs = 9_999_999
+
+    const myRowBase = {
+      id: currentUser?.id ?? 'guest-local',
+      username: currentUser?.username ?? 'you',
+      solved,
+      penalty,
+      bestRuntime,
+      lastAcceptedAtMs,
+    }
+
+    const bots: Array<Omit<ContestStandingRow, 'predictedDelta' | 'isCurrentUser'>> = []
+    const contestKey = `${contestProblems.map((problem) => problem.id).join('-')}:${contestStartAt ?? 'idle'}`
+    const botCount = 10
+    for (let index = 0; index < botCount; index += 1) {
+      const seed = stringHash(`${contestKey}:${index}`)
+      const maxSolved = contestProblems.length
+      const botSolved = Math.min(maxSolved, Math.floor((seed % ((maxSolved + 1) * 10)) / 10))
+      const botPenalty = 95 + (seed % 420) + (maxSolved - botSolved) * 34
+      const botRuntime = 36 + (seed % 260)
+      const botLastAccepted = 12_000 + (seed % 380_000)
+      bots.push({
+        id: `bot-${index + 1}`,
+        username: `solver-${index + 1}`,
+        solved: botSolved,
+        penalty: botPenalty,
+        bestRuntime: botRuntime,
+        lastAcceptedAtMs: botLastAccepted,
+      })
+    }
+
+    const rows: ContestStandingRow[] = [myRowBase, ...bots].map((row) => ({
+      ...row,
+      predictedDelta: 0,
+      isCurrentUser: row.id === myRowBase.id,
+    }))
+
+    rows.sort((a, b) => {
+      if (b.solved !== a.solved) return b.solved - a.solved
+      if (a.penalty !== b.penalty) return a.penalty - b.penalty
+      if (a.bestRuntime !== b.bestRuntime) return a.bestRuntime - b.bestRuntime
+      if (a.lastAcceptedAtMs !== b.lastAcceptedAtMs) return a.lastAcceptedAtMs - b.lastAcceptedAtMs
+      return a.username.localeCompare(b.username)
+    })
+
+    const participantCount = rows.length
+    rows.forEach((row, index) => {
+      const standingScore = participantCount <= 1 ? 0 : (participantCount - 1 - index) / (participantCount - 1)
+      const expected = 1 / (1 + 10 ** ((BASE_RATING - ratingProfile.rating) / 400))
+      const delta = Math.round(32 * (standingScore - expected))
+      row.predictedDelta = clampValue(delta, -64, 64)
+    })
+
+    return rows
+  }, [contestProblems, contestStartAt, contestSubmissionScope, currentUser?.id, currentUser?.username, nowTs, ratingProfile.rating])
+
+  const currentContestStanding = useMemo(() => {
+    return contestStandings.find((row) => row.isCurrentUser) ?? null
+  }, [contestStandings])
+
   function applyRatingSession(
     mode: 'contest' | 'mock',
     startedAt: string,
@@ -1208,8 +1429,29 @@ export default function App() {
   }, [communityMessage])
 
   useEffect(() => {
+    safeWrite(TEAM_SPACES_STORAGE_KEY, teamSpaces)
+  }, [teamSpaces])
+
+  useEffect(() => {
+    safeWrite(ACTIVE_TEAM_STORAGE_KEY, activeTeamId)
+  }, [activeTeamId])
+
+  useEffect(() => {
+    if (!currentUser) {
+      setActiveTeamId(null)
+      return
+    }
+    if (!activeTeamId) return
+    const active = teamSpaces.find((team) => team.id === activeTeamId)
+    if (!active || !active.members.some((member) => member.userId === currentUser.id)) {
+      const fallback = teamSpaces.find((team) => team.members.some((member) => member.userId === currentUser.id))
+      setActiveTeamId(fallback?.id ?? null)
+    }
+  }, [activeTeamId, currentUser, teamSpaces])
+
+  useEffect(() => {
     const loadData = async () => {
-      if (view === 'leaderboard') {
+      if (view === 'leaderboard' || view === 'teams') {
         setCommunityLoading(true)
         const data = await communityService.listLeaderboard(50)
         setLeaderboard(data)
@@ -1322,6 +1564,98 @@ export default function App() {
     setSelectedProblemId(next.id)
     setActiveTab('description')
     setJudgeResult(null)
+  }
+
+  const openSubmissionDetail = (submissionId: string) => {
+    setSelectedSubmissionId(submissionId)
+    setView('submission-detail')
+  }
+
+  const createTeam = () => {
+    if (!currentUser) {
+      setCommunityMessage('Sign in to create a team.')
+      return
+    }
+
+    const name = createTeamName.trim()
+    if (name.length < 3) {
+      setCommunityMessage('Team name must be at least 3 characters.')
+      return
+    }
+
+    let inviteCode = generateInviteCode()
+    const existingCodes = new Set(teamSpaces.map((team) => team.inviteCode))
+    let guard = 0
+    while (existingCodes.has(inviteCode) && guard < 10) {
+      inviteCode = generateInviteCode()
+      guard += 1
+    }
+
+    const team: TeamSpace = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      ownerId: currentUser.id,
+      inviteCode,
+      isPrivate: createTeamPrivate,
+      createdAt: new Date().toISOString(),
+      members: [
+        {
+          userId: currentUser.id,
+          username: currentUser.username,
+          joinedAt: new Date().toISOString(),
+        },
+      ],
+    }
+
+    setTeamSpaces((prev) => [team, ...prev])
+    setActiveTeamId(team.id)
+    setCreateTeamName('')
+    setCommunityMessage(`Team created. Invite code: ${inviteCode}`)
+  }
+
+  const joinTeam = () => {
+    if (!currentUser) {
+      setCommunityMessage('Sign in to join a team.')
+      return
+    }
+
+    const normalizedCode = joinTeamCode.trim().toUpperCase()
+    if (!normalizedCode) {
+      setCommunityMessage('Enter an invite code.')
+      return
+    }
+
+    const target = teamSpaces.find((team) => team.inviteCode === normalizedCode)
+    if (!target) {
+      setCommunityMessage('Invite code not found.')
+      return
+    }
+
+    if (target.members.some((member) => member.userId === currentUser.id)) {
+      setActiveTeamId(target.id)
+      setCommunityMessage(`Already a member of ${target.name}.`)
+      return
+    }
+
+    setTeamSpaces((prev) =>
+      prev.map((team) => {
+        if (team.id !== target.id) return team
+        return {
+          ...team,
+          members: [
+            ...team.members,
+            {
+              userId: currentUser.id,
+              username: currentUser.username,
+              joinedAt: new Date().toISOString(),
+            },
+          ],
+        }
+      })
+    )
+    setActiveTeamId(target.id)
+    setJoinTeamCode('')
+    setCommunityMessage(`Joined team ${target.name}.`)
   }
 
   const startContest = () => {
@@ -1563,6 +1897,7 @@ export default function App() {
     setLastAction(submitMode ? 'Submit' : 'Run')
 
     if (submitMode) {
+      const score = result.total > 0 ? computeSubmissionScore(selectedProblem, result, language) : 0
       const record: SubmissionRecord = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         submittedAt: new Date().toISOString(),
@@ -1573,6 +1908,10 @@ export default function App() {
         passed: result.passed,
         total: result.total,
         runtimeMs: result.runtimeMs,
+        score,
+        sourceCode: currentSource,
+        message: result.message,
+        caseResults: result.caseResults,
       }
 
       setSubmissions((prev) => {
@@ -1744,6 +2083,13 @@ export default function App() {
             onClick={() => setView('profile')}
           >
             Profile
+          </button>
+          <button
+            className={view === 'teams' ? 'nav-pill active' : 'nav-pill'}
+            type="button"
+            onClick={() => setView('teams')}
+          >
+            Teams
           </button>
           <button
             className={view === 'reviews' ? 'nav-pill active' : 'nav-pill'}
@@ -2103,6 +2449,7 @@ export default function App() {
                             <th>Passed</th>
                             <th>Runtime</th>
                             <th>Submitted At</th>
+                            <th>Action</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2129,6 +2476,15 @@ export default function App() {
                               </td>
                               <td>{submission.runtimeMs} ms</td>
                               <td>{new Date(submission.submittedAt).toLocaleString()}</td>
+                              <td>
+                                <button
+                                  className="btn ghost tiny"
+                                  type="button"
+                                  onClick={() => openSubmissionDetail(submission.id)}
+                                >
+                                  View
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -2453,7 +2809,46 @@ export default function App() {
               ) : null}
               <span className="meta-pill">Time Left: {minutesAndSeconds(contestRemainingMs)}</span>
               <span className="meta-pill">Solved: {contestSolvedCount}/{contestProblems.length}</span>
+              {currentContestStanding ? (
+                <>
+                  <span className="meta-pill">Rank: #{contestStandings.findIndex((row) => row.isCurrentUser) + 1}/{contestStandings.length}</span>
+                  <span className="meta-pill">
+                    Predicted Δ {currentContestStanding.predictedDelta >= 0 ? '+' : ''}{currentContestStanding.predictedDelta}
+                  </span>
+                  <span className="meta-pill">
+                    Projected Rating {Math.max(800, ratingProfile.rating + currentContestStanding.predictedDelta)}
+                  </span>
+                </>
+              ) : null}
             </div>
+
+            <h2>Live Standings (Simulated Field)</h2>
+            <table className="leaderboard-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>User</th>
+                  <th>Solved</th>
+                  <th>Penalty</th>
+                  <th>Best Runtime</th>
+                  <th>Last Accepted</th>
+                  <th>Predicted Δ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contestStandings.map((row, index) => (
+                  <tr key={`contest-standing-${row.id}`} className={row.isCurrentUser ? 'leaderboard-row-self' : ''}>
+                    <td>#{index + 1}</td>
+                    <td>{row.username}</td>
+                    <td>{row.solved}</td>
+                    <td>{row.penalty}</td>
+                    <td>{row.bestRuntime} ms</td>
+                    <td>{row.lastAcceptedAtMs === 9_999_999 ? '-' : minutesAndSeconds(row.lastAcceptedAtMs)}</td>
+                    <td>{row.predictedDelta >= 0 ? '+' : ''}{row.predictedDelta}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
 
             <table className="leaderboard-table">
               <thead>
@@ -2504,6 +2899,7 @@ export default function App() {
                       <th>Passed</th>
                       <th>Runtime</th>
                       <th>Time</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2514,6 +2910,11 @@ export default function App() {
                         <td>{submission.passed}/{submission.total}</td>
                         <td>{submission.runtimeMs} ms</td>
                         <td>{new Date(submission.submittedAt).toLocaleTimeString()}</td>
+                        <td>
+                          <button className="btn ghost tiny" type="button" onClick={() => openSubmissionDetail(submission.id)}>
+                            View
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2527,7 +2928,8 @@ export default function App() {
             <ul className="statement-list">
               <li>Fixed weekly set generated deterministically for fairness.</li>
               <li>Session timer starts when you click start and auto-ends at 90 minutes.</li>
-              <li>Score proxy: solved count and runtime quality from accepted submissions.</li>
+              <li>Tie-breakers follow solved count, then penalty, best accepted runtime, and last accepted time.</li>
+              <li>Live standings include predicted rating delta so you can choose when to end the session.</li>
             </ul>
           </section>
         </main>
@@ -2677,6 +3079,7 @@ export default function App() {
                       <th>Passed</th>
                       <th>Runtime</th>
                       <th>Time</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2687,6 +3090,11 @@ export default function App() {
                         <td>{submission.passed}/{submission.total}</td>
                         <td>{submission.runtimeMs} ms</td>
                         <td>{new Date(submission.submittedAt).toLocaleTimeString()}</td>
+                        <td>
+                          <button className="btn ghost tiny" type="button" onClick={() => openSubmissionDetail(submission.id)}>
+                            View
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2970,6 +3378,7 @@ export default function App() {
                   <th>Language</th>
                   <th>Runtime</th>
                   <th>Time</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -2980,10 +3389,251 @@ export default function App() {
                     <td>{languageLabels[submission.language]}</td>
                     <td>{submission.runtimeMs} ms</td>
                     <td>{new Date(submission.submittedAt).toLocaleString()}</td>
+                    <td>
+                      <button className="btn ghost tiny" type="button" onClick={() => openSubmissionDetail(submission.id)}>
+                        View
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </section>
+        </main>
+      )}
+
+      {view === 'teams' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Teams</h1>
+              <button className="btn ghost tiny" type="button" onClick={() => void refreshLeaderboard()}>
+                Refresh
+              </button>
+            </div>
+            <p className="muted">
+              Create private team spaces, share invite codes, and track focused leaderboard standings.
+            </p>
+
+            {!currentUser ? (
+              <div className="empty-state">
+                <p className="muted">Sign in to create or join private teams.</p>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('signin')
+                    setAuthOpen(true)
+                  }}
+                >
+                  Sign In
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="team-actions-grid">
+                  <article className="team-card">
+                    <h2>Create Team</h2>
+                    <label className="auth-field">
+                      Team Name
+                      <input
+                        type="text"
+                        value={createTeamName}
+                        onChange={(event) => setCreateTeamName(event.target.value)}
+                        placeholder="quant-warriors"
+                      />
+                    </label>
+                    <label className="bookmark-toggle">
+                      <input
+                        type="checkbox"
+                        checked={createTeamPrivate}
+                        onChange={(event) => setCreateTeamPrivate(event.target.checked)}
+                      />
+                      Private Team
+                    </label>
+                    <button className="btn primary" type="button" onClick={createTeam}>
+                      Create Team
+                    </button>
+                  </article>
+
+                  <article className="team-card">
+                    <h2>Join Team</h2>
+                    <label className="auth-field">
+                      Invite Code
+                      <input
+                        type="text"
+                        value={joinTeamCode}
+                        onChange={(event) => setJoinTeamCode(event.target.value.toUpperCase())}
+                        placeholder="AB12CD"
+                      />
+                    </label>
+                    <button className="btn secondary" type="button" onClick={joinTeam}>
+                      Join
+                    </button>
+                  </article>
+                </div>
+
+                <h2>Your Teams</h2>
+                {myTeams.length === 0 ? (
+                  <p className="muted">You are not in any teams yet.</p>
+                ) : (
+                  <div className="team-list">
+                    {myTeams.map((team) => (
+                      <article key={team.id} className={activeTeamId === team.id ? 'team-card active' : 'team-card'}>
+                        <div className="team-card-header">
+                          <h3>{team.name}</h3>
+                          <button className="btn ghost tiny" type="button" onClick={() => setActiveTeamId(team.id)}>
+                            {activeTeamId === team.id ? 'Active' : 'Open'}
+                          </button>
+                        </div>
+                        <p className="muted">Members: {team.members.length}</p>
+                        <p className="muted">Invite: <strong>{team.inviteCode}</strong></p>
+                        <p className="muted">{team.isPrivate ? 'Private leaderboard enabled.' : 'Public team mode.'}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Team Leaderboard</h2>
+            {!activeTeam ? (
+              <p className="muted">Select a team to view private standings.</p>
+            ) : teamLeaderboardEntries.length === 0 ? (
+              <p className="muted">No members with ranked activity yet in this team.</p>
+            ) : (
+              <table className="leaderboard-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>User</th>
+                    <th>Solved</th>
+                    <th>Proof</th>
+                    <th>Rating</th>
+                    <th>Composite</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {teamLeaderboardEntries.map((entry) => (
+                    <tr key={`team-rank-${entry.id}`} className={entry.id === currentUser?.id ? 'leaderboard-row-self' : ''}>
+                      <td>#{entry.rank}</td>
+                      <td>{entry.username}</td>
+                      <td>{entry.solvedCount}</td>
+                      <td>{entry.proofScore}</td>
+                      <td>{entry.rating}</td>
+                      <td>{entry.compositeScore}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {activeTeam ? (
+              <>
+                <h2>Members</h2>
+                <table className="submissions-table">
+                  <thead>
+                    <tr>
+                      <th>User</th>
+                      <th>Joined</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeTeam.members.map((member) => (
+                      <tr key={`team-member-${activeTeam.id}-${member.userId}`}>
+                        <td>{member.username}</td>
+                        <td>{new Date(member.joinedAt).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            ) : null}
+          </section>
+        </main>
+      )}
+
+      {view === 'submission-detail' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Submission Detail</h1>
+              <button className="btn ghost tiny" type="button" onClick={() => setView('problems')}>
+                Back To Problems
+              </button>
+            </div>
+
+            {!selectedSubmission ? (
+              <p className="muted">Select a submission from problem/contest/mock/profile tables.</p>
+            ) : (
+              <>
+                <div className="contest-summary">
+                  <span className="meta-pill">{selectedSubmission.problemId}</span>
+                  <span className="meta-pill">{selectedSubmission.problemTitle}</span>
+                  <span className="meta-pill">{selectedSubmission.status}</span>
+                  <span className="meta-pill">{languageLabels[selectedSubmission.language]}</span>
+                  <span className="meta-pill">{selectedSubmission.passed}/{selectedSubmission.total} tests</span>
+                  <span className="meta-pill">{selectedSubmission.runtimeMs} ms</span>
+                  <span className="meta-pill">Score {selectedSubmission.score ?? 0}</span>
+                  <span className="meta-pill">{new Date(selectedSubmission.submittedAt).toLocaleString()}</span>
+                </div>
+
+                {selectedSubmissionProblem ? (
+                  <button
+                    className="btn secondary tiny"
+                    type="button"
+                    onClick={() => {
+                      setView('problems')
+                      setSelectedProblemId(selectedSubmissionProblem.id)
+                      setActiveTab('submissions')
+                    }}
+                  >
+                    Open Problem
+                  </button>
+                ) : null}
+
+                {selectedSubmission.message ? <p className="result-message">{selectedSubmission.message}</p> : null}
+
+                <h2>Source Code Snapshot</h2>
+                <pre className="review-code">{selectedSubmission.sourceCode ?? 'No source snapshot stored.'}</pre>
+              </>
+            )}
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Case Breakdown</h2>
+            {!selectedSubmission ? (
+              <p className="muted">No submission selected.</p>
+            ) : !selectedSubmission.caseResults || selectedSubmission.caseResults.length === 0 ? (
+              <p className="muted">Case-level output was not captured for this submission.</p>
+            ) : (
+              <table className="cases-table">
+                <thead>
+                  <tr>
+                    <th>Case</th>
+                    <th>Result</th>
+                    <th>Expected</th>
+                    <th>Received</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedSubmission.caseResults.map((testCase, index) => (
+                    <tr key={`detail-case-${selectedSubmission.id}-${index}`}>
+                      <td>{testCase.hidden ? `Hidden ${index + 1}` : testCase.inputLabel}</td>
+                      <td>
+                        <span className={testCase.passed ? 'case-pass' : 'case-fail'}>
+                          {testCase.passed ? 'Pass' : 'Fail'}
+                        </span>
+                      </td>
+                      <td>{formatValue(testCase.expected)}</td>
+                      <td>{testCase.error ? `Error: ${testCase.error}` : formatValue(testCase.received)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </section>
         </main>
       )}

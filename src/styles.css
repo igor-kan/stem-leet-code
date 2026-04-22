@@ -928,6 +928,45 @@ textarea {
   gap: 0.45rem;
 }
 
+.team-actions-grid {
+  margin-top: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.team-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.team-card {
+  border: 1px solid #e2e8f2;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.68rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.team-card.active {
+  border-color: #c9dbf8;
+  background: linear-gradient(180deg, #f7fbff 0%, #ffffff 100%);
+}
+
+.team-card h2,
+.team-card h3 {
+  margin: 0;
+}
+
+.team-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
 .discuss-filter {
   max-width: 340px;
 }
@@ -1328,6 +1367,11 @@ textarea {
   }
 
   .bookmark-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .team-actions-grid,
+  .team-list {
     grid-template-columns: 1fr;
   }
 

@@ -55,4 +55,8 @@ export interface SubmissionRecord {
   passed: number
   total: number
   runtimeMs: number
+  score?: number
+  sourceCode?: string
+  message?: string
+  caseResults?: CaseResult[]
 }
