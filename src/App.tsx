@@ -18,6 +18,7 @@ type TopView =
   | 'daily'
   | 'contest'
   | 'mock'
+  | 'profile'
   | 'leaderboard'
   | 'reviews'
   | 'progress'
@@ -25,6 +26,15 @@ type TopView =
   | 'plans'
 type AuthMode = 'signin' | 'signup'
 type StatusFilter = 'All' | 'Solved' | 'Attempted' | 'Unsolved'
+type SortField = 'id' | 'title' | 'difficulty' | 'acceptance' | 'status'
+
+interface AchievementCard {
+  id: string
+  title: string
+  description: string
+  unlocked: boolean
+  progressLabel: string
+}
 
 interface ReviewDraft {
   verdict: ReviewInput['verdict']
@@ -393,6 +403,8 @@ export default function App() {
   const [topicFilter, setTopicFilter] = useState<'All' | string>('All')
   const [tagFilter, setTagFilter] = useState<'All' | string>('All')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('All')
+  const [sortField, setSortField] = useState<SortField>('id')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [bookmarkOnly, setBookmarkOnly] = useState(false)
   const [selectedProblemId, setSelectedProblemId] = useState(STEM_PROBLEMS[0]?.id ?? '')
   const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE)
@@ -551,13 +563,35 @@ export default function App() {
     topicFilter,
   ])
 
+  const sortedProblems = useMemo(() => {
+    const list = [...filteredProblems]
+    const direction = sortDirection === 'asc' ? 1 : -1
+    const difficultyWeight: Record<Difficulty, number> = { Easy: 1, Medium: 2, Hard: 3 }
+
+    const statusValueFor = (problem: StemProblem): number => {
+      if (acceptedProblemIds.has(problem.id)) return 3
+      if (attemptedProblemIds.has(problem.id)) return 2
+      return 1
+    }
+
+    list.sort((a, b) => {
+      if (sortField === 'id') return a.id.localeCompare(b.id) * direction
+      if (sortField === 'title') return a.title.localeCompare(b.title) * direction
+      if (sortField === 'difficulty') return (difficultyWeight[a.difficulty] - difficultyWeight[b.difficulty]) * direction
+      if (sortField === 'acceptance') return (a.acceptance - b.acceptance) * direction
+      return (statusValueFor(a) - statusValueFor(b)) * direction || a.id.localeCompare(b.id)
+    })
+
+    return list
+  }, [acceptedProblemIds, attemptedProblemIds, filteredProblems, sortDirection, sortField])
+
   const companyTagsByProblemId = useMemo(() => {
     return new Map(STEM_PROBLEMS.map((problem) => [problem.id, companyTracksForProblem(problem)] as const))
   }, [])
 
   const selectedProblem =
     STEM_PROBLEMS.find((problem) => problem.id === selectedProblemId) ??
-    filteredProblems[0] ??
+    sortedProblems[0] ??
     STEM_PROBLEMS[0]
   const selectedProblemNote = notes[selectedProblem.id] ?? ''
   const selectedProofNote = proofNotes[selectedProblem.id] ?? ''
@@ -802,6 +836,212 @@ export default function App() {
   const latestContestEvent = ratingProfile.history.find((event) => event.mode === 'contest') ?? null
   const latestMockEvent = ratingProfile.history.find((event) => event.mode === 'mock') ?? null
   const currentRatingTier = ratingTierFor(ratingProfile.rating)
+  const acceptedSubmissions = useMemo(() => {
+    return submissions.filter((submission) => submission.status === 'Accepted')
+  }, [submissions])
+
+  const acceptedCountsByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const submission of acceptedSubmissions) {
+      const key = submission.submittedAt.slice(0, 10)
+      map.set(key, (map.get(key) ?? 0) + 1)
+    }
+    return map
+  }, [acceptedSubmissions])
+
+  const activePracticeStreak = useMemo(() => {
+    let streak = 0
+    const cursor = new Date(Date.UTC(
+      new Date(nowTs).getUTCFullYear(),
+      new Date(nowTs).getUTCMonth(),
+      new Date(nowTs).getUTCDate()
+    ))
+
+    while (true) {
+      const key = toDateKey(cursor)
+      const count = acceptedCountsByDate.get(key) ?? 0
+      if (count <= 0) break
+      streak += 1
+      cursor.setUTCDate(cursor.getUTCDate() - 1)
+    }
+
+    return streak
+  }, [acceptedCountsByDate, nowTs])
+
+  const practiceActivityDays = useMemo(() => {
+    const days: Array<{ dateKey: string; count: number; intensity: 0 | 1 | 2 | 3 | 4 }> = []
+    for (let i = 83; i >= 0; i -= 1) {
+      const day = new Date(nowTs)
+      day.setHours(0, 0, 0, 0)
+      day.setDate(day.getDate() - i)
+      const dateKey = toDateKey(day)
+      const count = acceptedCountsByDate.get(dateKey) ?? 0
+      const intensity: 0 | 1 | 2 | 3 | 4 =
+        count <= 0 ? 0 : count === 1 ? 1 : count === 2 ? 2 : count === 3 ? 3 : 4
+      days.push({ dateKey, count, intensity })
+    }
+    return days
+  }, [acceptedCountsByDate, nowTs])
+
+  const languagePerformanceRows = useMemo(() => {
+    const rows = new Map<Language, { attempts: number; accepted: number; runtimeTotal: number }>()
+    for (const languageKey of Object.keys(languageLabels) as Language[]) {
+      rows.set(languageKey, { attempts: 0, accepted: 0, runtimeTotal: 0 })
+    }
+
+    for (const submission of submissions) {
+      const current = rows.get(submission.language)
+      if (!current) continue
+      current.attempts += 1
+      if (submission.status === 'Accepted') {
+        current.accepted += 1
+        current.runtimeTotal += submission.runtimeMs
+      }
+    }
+
+    return (Object.keys(languageLabels) as Language[])
+      .map((languageKey) => {
+        const current = rows.get(languageKey) ?? { attempts: 0, accepted: 0, runtimeTotal: 0 }
+        return {
+          language: languageKey,
+          attempts: current.attempts,
+          accepted: current.accepted,
+          acceptedRate: current.attempts === 0 ? 0 : Math.round((current.accepted / current.attempts) * 100),
+          avgRuntime: current.accepted === 0 ? null : Math.round(current.runtimeTotal / current.accepted),
+        }
+      })
+      .sort((a, b) => b.attempts - a.attempts || a.language.localeCompare(b.language))
+  }, [submissions])
+
+  const topicRatingRows = useMemo(() => {
+    const topics = Array.from(new Set(STEM_PROBLEMS.map((problem) => problem.topic)))
+    return topics
+      .map((topic) => {
+        const record = ratingProfile.topicRatings[topic] ?? {
+          rating: BASE_RATING,
+          sessions: 0,
+          updatedAt: '',
+        }
+        return {
+          topic,
+          rating: record.rating,
+          sessions: record.sessions,
+          tier: ratingTierFor(record.rating),
+        }
+      })
+      .sort((a, b) => b.rating - a.rating || b.sessions - a.sessions || a.topic.localeCompare(b.topic))
+  }, [ratingProfile.topicRatings])
+
+  const hardSolvedCount = useMemo(() => {
+    return STEM_PROBLEMS.filter((problem) => problem.difficulty === 'Hard' && acceptedProblemIds.has(problem.id)).length
+  }, [acceptedProblemIds])
+
+  const solvedTopicCount = useMemo(() => {
+    return progressByTopic.filter((row) => row.solved > 0).length
+  }, [progressByTopic])
+
+  const completedPlansCount = useMemo(() => {
+    return studyPlanProgress.filter((plan) => plan.total > 0 && plan.solved === plan.total).length
+  }, [studyPlanProgress])
+
+  const leanAcceptedCount = useMemo(() => {
+    return submissions.filter((submission) => submission.language === 'lean4' && submission.status === 'Accepted').length
+  }, [submissions])
+
+  const solvedBookmarkedCount = useMemo(() => {
+    return bookmarks.filter((problemId) => acceptedProblemIds.has(problemId)).length
+  }, [acceptedProblemIds, bookmarks])
+
+  const bookmarkedProblems = useMemo(() => {
+    return bookmarks
+      .map((problemId) => problemById.get(problemId))
+      .filter((problem): problem is StemProblem => Boolean(problem))
+  }, [bookmarks, problemById])
+
+  const achievementCards = useMemo<AchievementCard[]>(() => {
+    const reviewScore = currentUser?.reviewScore ?? 0
+    const totalSubmissions = submissions.length
+
+    return [
+      {
+        id: 'first-accepted',
+        title: 'First Accepted',
+        description: 'Submit at least one accepted solution.',
+        unlocked: solvedCount >= 1,
+        progressLabel: `${Math.min(1, solvedCount)}/1`,
+      },
+      {
+        id: 'weekly-streak',
+        title: 'Week Streak',
+        description: 'Maintain 7 consecutive active practice days.',
+        unlocked: activePracticeStreak >= 7,
+        progressLabel: `${Math.min(activePracticeStreak, 7)}/7 days`,
+      },
+      {
+        id: 'proof-engineer',
+        title: 'Proof Engineer',
+        description: 'Submit 5 accepted Lean4 proof-mode solutions.',
+        unlocked: leanAcceptedCount >= 5,
+        progressLabel: `${Math.min(leanAcceptedCount, 5)}/5 Lean accepts`,
+      },
+      {
+        id: 'hard-crusher',
+        title: 'Hard Crusher',
+        description: 'Solve 15 hard problems.',
+        unlocked: hardSolvedCount >= 15,
+        progressLabel: `${Math.min(hardSolvedCount, 15)}/15 hard solved`,
+      },
+      {
+        id: 'topic-allrounder',
+        title: 'Topic All-Rounder',
+        description: 'Solve at least one problem in 6 different topics.',
+        unlocked: solvedTopicCount >= 6,
+        progressLabel: `${Math.min(solvedTopicCount, 6)}/6 topics`,
+      },
+      {
+        id: 'review-guardian',
+        title: 'Review Guardian',
+        description: 'Reach 60 review score through peer verification.',
+        unlocked: reviewScore >= 60,
+        progressLabel: `${Math.min(reviewScore, 60)}/60 review`,
+      },
+      {
+        id: 'rating-expert',
+        title: 'Rating Expert',
+        description: 'Reach overall rating 1800.',
+        unlocked: ratingProfile.rating >= 1800,
+        progressLabel: `${Math.min(ratingProfile.rating, 1800)}/1800`,
+      },
+      {
+        id: 'plan-finisher',
+        title: 'Plan Finisher',
+        description: 'Complete at least one curated study plan.',
+        unlocked: completedPlansCount >= 1,
+        progressLabel: `${Math.min(completedPlansCount, 1)}/1 plan`,
+      },
+      {
+        id: 'submission-marathon',
+        title: 'Submission Marathon',
+        description: 'Log 100 total submissions.',
+        unlocked: totalSubmissions >= 100,
+        progressLabel: `${Math.min(totalSubmissions, 100)}/100 submits`,
+      },
+    ]
+  }, [
+    activePracticeStreak,
+    completedPlansCount,
+    currentUser?.reviewScore,
+    hardSolvedCount,
+    leanAcceptedCount,
+    ratingProfile.rating,
+    solvedCount,
+    solvedTopicCount,
+    submissions.length,
+  ])
+
+  const unlockedAchievements = useMemo(() => {
+    return achievementCards.filter((achievement) => achievement.unlocked).length
+  }, [achievementCards])
 
   function applyRatingSession(
     mode: 'contest' | 'mock',
@@ -1076,7 +1316,7 @@ export default function App() {
   }
 
   const openRandomProblem = () => {
-    const pool = filteredProblems.length > 0 ? filteredProblems : STEM_PROBLEMS
+    const pool = sortedProblems.length > 0 ? sortedProblems : STEM_PROBLEMS
     const next = pool[Math.floor(Math.random() * pool.length)]
     if (!next) return
     setSelectedProblemId(next.id)
@@ -1499,6 +1739,13 @@ export default function App() {
             Mock Exam
           </button>
           <button
+            className={view === 'profile' ? 'nav-pill active' : 'nav-pill'}
+            type="button"
+            onClick={() => setView('profile')}
+          >
+            Profile
+          </button>
+          <button
             className={view === 'reviews' ? 'nav-pill active' : 'nav-pill'}
             type="button"
             onClick={() => setView('reviews')}
@@ -1621,6 +1868,25 @@ export default function App() {
                   <option value="Attempted">Attempted</option>
                   <option value="Unsolved">Unsolved</option>
                 </select>
+                <select
+                  className="difficulty-select"
+                  value={sortField}
+                  onChange={(event) => setSortField(event.target.value as SortField)}
+                >
+                  <option value="id">Sort: Problem ID</option>
+                  <option value="title">Sort: Title</option>
+                  <option value="difficulty">Sort: Difficulty</option>
+                  <option value="acceptance">Sort: Acceptance</option>
+                  <option value="status">Sort: Status</option>
+                </select>
+                <select
+                  className="difficulty-select"
+                  value={sortDirection}
+                  onChange={(event) => setSortDirection(event.target.value as 'asc' | 'desc')}
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
               </div>
               <label className="bookmark-toggle">
                 <input
@@ -1643,7 +1909,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredProblems.map((problem) => {
+                  {sortedProblems.map((problem) => {
                     const isSelected = problem.id === selectedProblem.id
                     const status = problemStatusMap.get(problem.id) ?? 'Unsolved'
                     const bookmarked = bookmarks.includes(problem.id)
@@ -2438,6 +2704,157 @@ export default function App() {
               <li>Use Proof Mode inside each problem for Lean-based formalization workflow.</li>
               <li>Each completed session updates local rating for long-term progression tracking.</li>
             </ul>
+          </section>
+        </main>
+      )}
+
+      {view === 'profile' && (
+        <main className="community-workspace">
+          <section className="card community-panel">
+            <div className="community-header">
+              <h1>Profile</h1>
+            </div>
+            <p className="muted">
+              Personal performance analytics, achievement tracking, and activity history.
+            </p>
+
+            <div className="profile-overview-grid">
+              <article className="profile-stat-card">
+                <h3>Overall Rating</h3>
+                <p className="profile-stat-value">{ratingProfile.rating}</p>
+                <span className={`meta-pill rating-tier-pill ${currentRatingTier.className}`}>{currentRatingTier.label}</span>
+              </article>
+              <article className="profile-stat-card">
+                <h3>Practice Streak</h3>
+                <p className="profile-stat-value">{activePracticeStreak}</p>
+                <p className="muted">Consecutive days with accepted submissions</p>
+              </article>
+              <article className="profile-stat-card">
+                <h3>Solved Hard</h3>
+                <p className="profile-stat-value">{hardSolvedCount}</p>
+                <p className="muted">Hard problems solved end-to-end</p>
+              </article>
+              <article className="profile-stat-card">
+                <h3>Achievements</h3>
+                <p className="profile-stat-value">{unlockedAchievements}/{achievementCards.length}</p>
+                <p className="muted">Unlocked badge milestones</p>
+              </article>
+              <article className="profile-stat-card">
+                <h3>Lean Accepted</h3>
+                <p className="profile-stat-value">{leanAcceptedCount}</p>
+                <p className="muted">Formal proof-mode accepted submits</p>
+              </article>
+              <article className="profile-stat-card">
+                <h3>Bookmarked Solved</h3>
+                <p className="profile-stat-value">{solvedBookmarkedCount}/{bookmarks.length}</p>
+                <p className="muted">Solved from your bookmark queue</p>
+              </article>
+            </div>
+
+            <h2>Achievements</h2>
+            <div className="achievement-grid">
+              {achievementCards.map((achievement) => (
+                <article
+                  key={achievement.id}
+                  className={achievement.unlocked ? 'achievement-card unlocked' : 'achievement-card'}
+                >
+                  <h3>{achievement.title}</h3>
+                  <p className="muted">{achievement.description}</p>
+                  <span className="meta-pill">{achievement.progressLabel}</span>
+                </article>
+              ))}
+            </div>
+
+            <h2>Accepted Activity (Last 12 Weeks)</h2>
+            <div className="activity-heatmap" role="img" aria-label="Accepted activity heatmap">
+              {practiceActivityDays.map((day) => (
+                <div
+                  key={`activity-cell-${day.dateKey}`}
+                  className={`activity-cell level-${day.intensity}`}
+                  title={`${day.dateKey}: ${day.count} accepted`}
+                />
+              ))}
+            </div>
+            <div className="activity-legend muted">
+              <span>Less</span>
+              <span className="activity-cell level-0" />
+              <span className="activity-cell level-1" />
+              <span className="activity-cell level-2" />
+              <span className="activity-cell level-3" />
+              <span className="activity-cell level-4" />
+              <span>More</span>
+            </div>
+          </section>
+
+          <section className="card score-rubric">
+            <h2>Language Performance</h2>
+            <table className="submissions-table">
+              <thead>
+                <tr>
+                  <th>Language</th>
+                  <th>Attempts</th>
+                  <th>Accepted</th>
+                  <th>Acceptance</th>
+                  <th>Avg Runtime</th>
+                </tr>
+              </thead>
+              <tbody>
+                {languagePerformanceRows.map((row) => (
+                  <tr key={`profile-lang-${row.language}`}>
+                    <td>{languageLabels[row.language]}</td>
+                    <td>{row.attempts}</td>
+                    <td>{row.accepted}</td>
+                    <td>{row.acceptedRate}%</td>
+                    <td>{row.avgRuntime === null ? '-' : `${row.avgRuntime} ms`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <h2>Topic Skill Ratings</h2>
+            <table className="leaderboard-table">
+              <thead>
+                <tr>
+                  <th>Topic</th>
+                  <th>Rating</th>
+                  <th>Tier</th>
+                  <th>Sessions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topicRatingRows.map((row) => (
+                  <tr key={`profile-topic-rating-${row.topic}`}>
+                    <td>{row.topic}</td>
+                    <td>{row.rating}</td>
+                    <td>
+                      <span className={`meta-pill rating-tier-pill ${row.tier.className}`}>{row.tier.label}</span>
+                    </td>
+                    <td>{row.sessions}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <h2>Bookmark Queue</h2>
+            {bookmarkedProblems.length === 0 ? (
+              <p className="muted">No bookmarks yet. Add problems from the main catalog.</p>
+            ) : (
+              <div className="bookmark-grid">
+                {bookmarkedProblems.slice(0, 10).map((problem) => (
+                  <button
+                    key={`profile-bookmark-${problem.id}`}
+                    type="button"
+                    className="plan-chip"
+                    onClick={() => {
+                      setView('problems')
+                      onPickProblem(problem.id)
+                    }}
+                  >
+                    {problem.id} · {problem.title}
+                  </button>
+                ))}
+              </div>
+            )}
           </section>
         </main>
       )}

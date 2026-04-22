@@ -822,6 +822,112 @@ textarea {
   margin: 0.1rem 0 0.25rem;
 }
 
+.profile-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.7rem;
+}
+
+.profile-stat-card {
+  border: 1px solid #e4eaf4;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.65rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.profile-stat-card h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #3f4f68;
+}
+
+.profile-stat-value {
+  margin: 0;
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: #1f2b3d;
+}
+
+.achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.achievement-card {
+  border: 1px solid #e2e8f2;
+  border-radius: 12px;
+  padding: 0.62rem;
+  background: #ffffff;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.achievement-card h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.achievement-card.unlocked {
+  border-color: #bedec9;
+  background: linear-gradient(180deg, #f2fbf5 0%, #ffffff 100%);
+}
+
+.activity-heatmap {
+  display: grid;
+  grid-template-columns: repeat(28, minmax(0, 1fr));
+  gap: 0.2rem;
+  margin-top: 0.4rem;
+}
+
+.activity-cell {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 3px;
+  border: 1px solid rgba(103, 119, 142, 0.12);
+  background: #eef2f8;
+}
+
+.activity-cell.level-0 {
+  background: #eef2f8;
+}
+
+.activity-cell.level-1 {
+  background: #d9ebff;
+}
+
+.activity-cell.level-2 {
+  background: #add3ff;
+}
+
+.activity-cell.level-3 {
+  background: #6eaefb;
+}
+
+.activity-cell.level-4 {
+  background: #2f77e5;
+}
+
+.activity-legend {
+  margin-top: 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.activity-legend .activity-cell {
+  width: 12px;
+}
+
+.bookmark-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
 .discuss-filter {
   max-width: 340px;
 }
@@ -1211,6 +1317,22 @@ textarea {
 
   .progress-grid {
     grid-template-columns: 1fr;
+  }
+
+  .profile-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .achievement-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bookmark-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-heatmap {
+    grid-template-columns: repeat(14, minmax(0, 1fr));
   }
 
   .mock-controls {
